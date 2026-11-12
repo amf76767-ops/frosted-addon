@@ -5,6 +5,7 @@ import com.manu.frosted.util.Draw2D;
 import com.manu.frosted.util.Rand;
 import meteordevelopment.meteorclient.events.render.Render2DEvent;
 import meteordevelopment.meteorclient.events.world.TickEvent;
+import meteordevelopment.meteorclient.renderer.Renderer2D;
 import meteordevelopment.meteorclient.settings.BoolSetting;
 import meteordevelopment.meteorclient.settings.DoubleSetting;
 import meteordevelopment.meteorclient.settings.EnumSetting;
@@ -15,7 +16,6 @@ import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.meteorclient.systems.modules.Modules;
 import meteordevelopment.meteorclient.utils.render.color.SettingColor;
 import meteordevelopment.orbit.EventHandler;
-import net.minecraft.client.gui.DrawContext;
 import net.minecraft.particle.ParticleTypes;
 import net.minecraft.util.math.BlockPos;
 
@@ -23,21 +23,18 @@ import java.util.HashMap;
 import java.util.Map;
 
 /**
- * Winter atmosphere with themes: snowfall with wind, twinkling sparkles, a frosted screen edge,
- * and sky effects (tint, stars, aurora, light rays, whiteout streaks).
- *
- * Aurora and stars are placed by direction, so they slide as you turn and are mostly visible
- * when you look up. The sky and cloud colours go through Meteor's own ambience module, since
- * that already owns the sky hooks; its previous values are restored when this is turned off.
+ * Winter atmosphere with themes: snowfall with wind, twinkling sparkles, a frosted screen edge
+ * with corner ice crystals, and smooth hardware-shaded sky effects (tint, stars, aurora curtains,
+ * volumetric light rays, whiteout wind streaks).
  */
 public class FrostedAmbience extends Module {
     public enum Theme {
         //      flakes wind  aurora sparkle haze  rays   stars  sky       cloud     tint      tintA
-        Tundra(6,   0.30, false, false, 0.00, false, false, 0xBEE1FA, 0xF0F8FF, 0xBEE1FA, 14),
-        Blizzard(22, 1.00, false, false, 0.45, false, false, 0x96AABE, 0xC8D2DC, 0xC8D2E1, 34),
-        Aurora(4,   0.15, true,  true,  0.00, false, true,  0x122355, 0x3C5A96, 0x0A1946, 40),
-        Glacier(5,  0.10, false, true,  0.00, true,  false, 0x78D7FF, 0xE1FAFF, 0x78D7FF, 12),
-        Midnight(4, 0.20, false, false, 0.00, false, true,  0x0A0F2D, 0x28325A, 0x050A28, 46);
+        Tundra(6,   0.30, false, true,  0.00, false, false, 0xBEE1FA, 0xF0F8FF, 0xBEE1FA, 14),
+        Blizzard(18, 1.00, false, false, 0.42, false, false, 0x96AABE, 0xC8D2DC, 0xC8D2E1, 30),
+        Aurora(5,   0.15, true,  true,  0.00, false, true,  0x122355, 0x3C5A96, 0x0A1946, 36),
+        Glacier(5,  0.12, false, true,  0.00, true,  false, 0x78D7FF, 0xE1FAFF, 0x78D7FF, 14),
+        Midnight(4, 0.20, true,  true,  0.00, false, true,  0x0A0F2D, 0x28325A, 0x050A28, 42);
 
         final int flakes;
         final double wind;
@@ -105,7 +102,7 @@ public class FrostedAmbience extends Module {
         .name("sky-effects").description("Tint, stars, aurora, light rays and whiteout streaks.").defaultValue(true).build());
 
     private final Setting<Boolean> vignette = sgScreen.add(new BoolSetting.Builder()
-        .name("frost-edge").description("Icy glow around the screen edge.").defaultValue(true).build());
+        .name("frost-edge").description("Icy glow and corner frost crystals around the screen edge.").defaultValue(true).build());
 
     private final Setting<Integer> strength = sgScreen.add(new IntSetting.Builder()
         .name("strength").defaultValue(35).min(0).sliderRange(0, 100).build());
@@ -150,7 +147,6 @@ public class FrostedAmbience extends Module {
         ticks++;
 
         Theme t = theme.get();
-
         if (skyPreset.get() && appliedTheme != t) applySky();
 
         boolean skyVisible = mc.world.isSkyVisible(mc.player.getBlockPos());
@@ -163,7 +159,6 @@ public class FrostedAmbience extends Module {
         double py = mc.player.getY();
         double pz = mc.player.getZ();
 
-        // Wind: a slowly turning direction with gusts on top.
         double windX = 0;
         double windZ = 0;
         if (wind.get()) {
@@ -173,30 +168,29 @@ public class FrostedAmbience extends Module {
             windZ = Math.sin(angle) * t.wind * gust;
         }
 
-        if (snowfall.get()) {
-            int n = Math.min(60, (int) Math.round(t.flakes * intensity.get() / 5.0));
+        if (snowfall.get() && (!openSky.get() || skyFade > 0.05)) {
+            int n = Math.min(36, (int) Math.round(t.flakes * intensity.get() / 5.0));
             double spread = radius.get() * 2.0;
 
             for (int i = 0; i < n; i++) {
-                // Spawn a bit upwind so the snow drifts across you instead of away from you.
                 double x = px + Rand.centered(spread) - windX * 6.0;
                 double z = pz + Rand.centered(spread) - windZ * 6.0;
-                double y = py + 3.0 + Rand.unit() * height.get();
+                double y = py + 2.5 + Rand.unit() * height.get();
                 if (openSky.get() && !mc.world.isSkyVisible(BlockPos.ofFloored(x, y, z))) continue;
 
                 mc.world.addParticleClient(ParticleTypes.SNOWFLAKE, x, y, z,
-                    Rand.centered(0.05) + windX * 0.12,
-                    -0.05 - Rand.unit() * 0.05,
-                    Rand.centered(0.05) + windZ * 0.12);
+                    Rand.centered(0.04) + windX * 0.12,
+                    -0.045 - Rand.unit() * 0.045,
+                    Rand.centered(0.04) + windZ * 0.12);
             }
         }
 
-        if (sparkles.get() && t.sparkles && ticks % 3 == 0) {
-            double x = px + Rand.centered(18.0);
-            double z = pz + Rand.centered(18.0);
-            double y = py + Rand.unit() * 5.0;
+        if (sparkles.get() && t.sparkles && ticks % 2 == 0) {
+            double x = px + Rand.centered(16.0);
+            double z = pz + Rand.centered(16.0);
+            double y = py + 0.3 + Rand.unit() * 4.5;
             mc.world.addParticleClient(ParticleTypes.END_ROD, x, y, z,
-                Rand.centered(0.01), 0.005 + Rand.unit() * 0.01, Rand.centered(0.01));
+                Rand.centered(0.012), 0.006 + Rand.unit() * 0.012, Rand.centered(0.012));
         }
     }
 
@@ -205,147 +199,220 @@ public class FrostedAmbience extends Module {
     @EventHandler
     private void onRender2D(Render2DEvent event) {
         if (mc.player == null || mc.world == null || mc.currentScreen != null) return;
-        DrawContext ctx = event.drawContext;
-        if (ctx == null) return;
 
-        int w = mc.getWindow().getScaledWidth();
-        int h = mc.getWindow().getScaledHeight();
+        double w = event.screenWidth > 0 ? event.screenWidth : mc.getWindow().getFramebufferWidth();
+        double h = event.screenHeight > 0 ? event.screenHeight : mc.getWindow().getFramebufferHeight();
         long now = System.currentTimeMillis();
         double time = (now % 1_000_000L) / 1000.0;
         Theme t = theme.get();
         double scale = intensity.get() / 5.0;
 
+        Renderer2D.COLOR.begin();
+
         if (screenEffects.get()) {
             double outdoor = skyFade;
             double pitch = mc.player.getPitch();
             double yaw = mc.player.getYaw();
-            // degrees on screen: the default 70 degree vertical field of view
             double ppd = h / 70.0;
 
-            // overall tint, softer indoors
-            int tintA = (int) (t.tintAlpha * Math.min(1.5, scale) * (0.45 + 0.55 * outdoor));
-            if (tintA > 0) ctx.fill(0, 0, w, h, Draw2D.argb(tintA, t.tint));
+            int tintA = (int) (t.tintAlpha * Math.min(1.5, scale) * (0.40 + 0.60 * outdoor));
+            if (tintA > 0) {
+                int topTint = Draw2D.argb(tintA, t.tint);
+                int botTint = Draw2D.argb(tintA / 3, Draw2D.shade(t.tint, 0.2));
+                Draw2D.polyQuadGrad(0, 0, topTint, w, 0, topTint, w, h, botTint, 0, h, botTint);
+            }
 
-            double lookUp = clamp01((15.0 - pitch) / 45.0);
+            double lookUp = clamp01((18.0 - pitch) / 45.0);
 
-            if (t.stars) drawStars(ctx, w, h, time, yaw, pitch, ppd, outdoor * lookUp);
-            if (t.aurora) drawAurora(ctx, w, h, time, yaw, pitch, ppd, outdoor * clamp01((25.0 - pitch) / 40.0) * Math.min(1.3, scale));
-            if (t.rays) drawRays(ctx, w, h, time, outdoor * Math.min(1.3, scale));
-            if (t.haze > 0) drawWhiteout(ctx, w, h, time, t, scale, outdoor);
+            if (t.stars) drawStars(w, h, time, yaw, pitch, ppd, outdoor * lookUp);
+            if (t.aurora) drawAurora(w, h, time, yaw, pitch, ppd, outdoor * clamp01((28.0 - pitch) / 42.0) * Math.min(1.3, scale));
+            if (t.rays) drawRays(w, h, time, outdoor * Math.min(1.3, scale));
+            if (t.haze > 0) drawWhiteout(w, h, time, t, scale, outdoor);
         }
 
-        if (vignette.get()) drawEdge(ctx, w, h, time);
+        if (vignette.get()) drawEdge(w, h, time);
+
+        Renderer2D.COLOR.render();
     }
 
-    private void drawStars(DrawContext ctx, int w, int h, double time, double yaw, double pitch, double ppd, double fade) {
+    private void drawStars(double w, double h, double time, double yaw, double pitch, double ppd, double fade) {
         if (fade <= 0.01) return;
-        for (int i = 0; i < 90; i++) {
+        double dotSize = Math.max(1.5, h / 420.0);
+
+        for (int i = 0; i < 85; i++) {
             double az = hash01(i * 3 + 1) * 360.0;
             double el = 6.0 + hash01(i * 3 + 2) * 70.0;
             double dAz = ((az - yaw + 540.0) % 360.0) - 180.0;
-            double x = w / 2.0 + dAz * ppd;
-            double y = h / 2.0 - (el - pitch) * ppd;
+            double x = w * 0.5 + dAz * ppd;
+            double y = h * 0.5 - (el - pitch) * ppd;
             if (x < 0 || x >= w || y < 0 || y >= h) continue;
 
-            double twinkle = 0.55 + 0.45 * Math.sin(time * (1.5 + hash01(i * 3) * 2.5) + i);
-            int alpha = (int) (200 * fade * twinkle);
-            if (alpha <= 8) continue;
+            double twinkle = 0.50 + 0.50 * Math.sin(time * (1.6 + hash01(i * 3) * 2.6) + i);
+            int alpha = (int) (220 * fade * twinkle);
+            if (alpha <= 10) continue;
 
-            int color = Draw2D.argb(alpha, i % 7 == 0 ? 0xBFE6FF : 0xFFFFFF);
-            int px = (int) x;
-            int py = (int) y;
-            ctx.fill(px, py, px + 1, py + 1, color);
-            if (i % 9 == 0 && twinkle > 0.8) {
-                int arm = Draw2D.argb(alpha / 2, 0xFFFFFF);
-                ctx.fill(px - 2, py, px + 3, py + 1, arm);
-                ctx.fill(px, py - 2, px + 1, py + 3, arm);
+            int rgb = (i % 5 == 0) ? 0xA8E0FF : (i % 7 == 0 ? 0xD8C8FF : 0xFFFFFF);
+            if (i % 8 == 0 && twinkle > 0.65) {
+                Draw2D.star(x, y, dotSize * 3.4, dotSize * 0.7, Draw2D.argb(alpha, 0xFFFFFF), Draw2D.argb(alpha / 2, rgb));
+            } else {
+                int c = Draw2D.argb(alpha, rgb);
+                Draw2D.polyQuad(x - dotSize * 0.5, y - dotSize * 0.5, x + dotSize * 0.5, y - dotSize * 0.5,
+                    x + dotSize * 0.5, y + dotSize * 0.5, x - dotSize * 0.5, y + dotSize * 0.5, c);
             }
         }
     }
 
-    private void drawAurora(DrawContext ctx, int w, int h, double time, double yaw, double pitch, double ppd, double fade) {
+    private void drawAurora(double w, double h, double time, double yaw, double pitch, double ppd, double fade) {
         if (fade <= 0.01) return;
 
-        int[] colors = {0x50FFAA, 0x5AC8FF, 0xAA78FF};
-        double[] elevations = {38.0, 46.0, 32.0};
-        int steps = 6;
+        int[] topColors = {0x9868FF, 0x48C8FF, 0x60FFB4};
+        int[] botColors = {0x42FFAA, 0x58FFEE, 0x78B4FF};
+        double[] elevations = {40.0, 47.0, 33.0};
+        int cols = 42;
+        double stepX = w / cols;
 
-        for (int band = 0; band < colors.length; band++) {
-            double phase = band * 1.7;
-            for (int x = 0; x < w; x += 6) {
-                double az = yaw + (x - w / 2.0) / ppd;
-                double wave = Math.sin(az * 0.09 + time * 0.35 + phase) * 6.0 + Math.sin(az * 0.23 - time * 0.5 + phase) * 2.0;
-                double top = h / 2.0 - (elevations[band] + wave - pitch) * ppd;
-                double len = (14.0 + 8.0 * Math.sin(az * 0.05 - time * 0.2 + phase)) * ppd;
-                if (top + len < 0 || top > h) continue;
+        for (int band = 0; band < topColors.length; band++) {
+            double phase = band * 1.85;
+            double prevX = 0;
+            double prevTop = 0;
+            double prevMid = 0;
+            double prevBot = 0;
+            int prevMidC = 0;
+            int prevGlowC = 0;
 
-                for (int s = 0; s < steps; s++) {
-                    double f = (s + 1) / (double) steps;
-                    int alpha = (int) (80 * fade * Math.pow(f, 1.6));
-                    if (alpha <= 2) continue;
-                    int y0 = (int) Math.round(top + len * s / steps);
-                    int y1 = (int) Math.round(top + len * (s + 1) / steps);
-                    if (y1 <= y0) continue;
-                    ctx.fill(x, Math.max(0, y0), Math.min(w, x + 6), Math.min(h, y1), Draw2D.argb(alpha, colors[band]));
+            for (int c = 0; c <= cols; c++) {
+                double x = c * stepX;
+                double az = yaw + (x - w * 0.5) / ppd;
+                double wave = Math.sin(az * 0.085 + time * 0.38 + phase) * 6.2
+                    + Math.sin(az * 0.22 - time * 0.52 + phase) * 2.2;
+                double top = h * 0.5 - (elevations[band] + wave - pitch) * ppd;
+                double len = (15.0 + 8.5 * Math.sin(az * 0.055 - time * 0.24 + phase)) * ppd;
+                double mid = top + len * 0.68;
+                double bot = top + len;
+
+                double shimmer = 0.65 + 0.35 * Math.sin(az * 0.16 + time * 0.9 + band);
+                int alphaMid = (int) Math.round(78 * fade * shimmer);
+                int alphaGlow = (int) Math.round(96 * fade * shimmer);
+                int midC = Draw2D.argb(alphaMid, topColors[band]);
+                int glowC = Draw2D.argb(alphaGlow, botColors[band]);
+                int transTop = Draw2D.argb(0, topColors[band]);
+                int transBot = Draw2D.argb(0, botColors[band]);
+
+                if (c > 0 && !(Math.max(prevBot, bot) < 0 || Math.min(prevTop, top) > h)) {
+                    // Upper curtain: fades in from transparent top to glowing middle
+                    Draw2D.polyQuadGrad(prevX, prevTop, transTop, x, top, transTop, x, mid, midC, prevX, prevMid, prevMidC);
+                    // Lower curtain core: intense aurora ribbon near the bottom fold
+                    Draw2D.polyQuadGrad(prevX, prevMid, prevMidC, x, mid, midC, x, bot, glowC, prevX, prevBot, prevGlowC);
+                    // Soft bottom fringe fadeout
+                    Draw2D.polyQuadGrad(prevX, prevBot, prevGlowC, x, bot, glowC, x, bot + len * 0.22, transBot, prevX, prevBot + len * 0.22, transBot);
                 }
+
+                prevX = x;
+                prevTop = top;
+                prevMid = mid;
+                prevBot = bot;
+                prevMidC = midC;
+                prevGlowC = glowC;
             }
         }
     }
 
-    private void drawRays(DrawContext ctx, int w, int h, double time, double fade) {
+    private void drawRays(double w, double h, double time, double fade) {
         if (fade <= 0.01) return;
-        for (int i = 0; i < 4; i++) {
-            double xTop = w * (0.12 + 0.24 * i) + Math.sin(time * 0.1 + i * 1.3) * 30.0;
-            double topW = 34.0 + 22.0 * Math.sin(time * 0.17 + i);
-            double drift = h * 0.45;
-            double bottomW = topW * 2.2;
+        for (int i = 0; i < 5; i++) {
+            double xTop = w * (0.10 + 0.20 * i) + Math.sin(time * 0.12 + i * 1.4) * (w * 0.03);
+            double topW = (w * 0.032) + (w * 0.018) * Math.sin(time * 0.19 + i);
+            double drift = h * 0.42;
+            double bottomW = topW * 2.4;
 
-            double[] xs = {xTop, xTop + topW, xTop + drift + bottomW, xTop + drift};
-            double[] ys = {0, 0, h, h};
-            int alpha = (int) ((16 + 10 * Math.sin(time * 0.4 + i * 2.0)) * fade);
-            Draw2D.fillPoly(ctx, xs, ys, 4, Draw2D.argb(alpha, 0xDDF6FF), 0, 0);
+            int topAlpha = (int) Math.round((24 + 12 * Math.sin(time * 0.45 + i * 1.9)) * fade);
+            int cTop = Draw2D.argb(topAlpha, 0xDDF6FF);
+            int cBot = Draw2D.argb(0, 0x96D8FF);
+
+            Draw2D.polyQuadGrad(
+                xTop, 0, cTop,
+                xTop + topW, 0, cTop,
+                xTop + drift + bottomW, h, cBot,
+                xTop + drift, h, cBot
+            );
         }
     }
 
-    private void drawWhiteout(DrawContext ctx, int w, int h, double time, Theme t, double scale, double outdoor) {
+    private void drawWhiteout(double w, double h, double time, Theme t, double scale, double outdoor) {
         double amount = t.haze * Math.min(1.5, scale) * (0.35 + 0.65 * outdoor);
 
-        int haze = (int) (70 * amount * (0.9 + 0.1 * Math.sin(time * 1.3)));
-        if (haze > 0) ctx.fill(0, 0, w, h, Draw2D.argb(haze, 0xFFFFFF));
+        int haze = (int) (62 * amount * (0.9 + 0.1 * Math.sin(time * 1.3)));
+        if (haze > 0) {
+            int c = Draw2D.argb(haze, 0xEEF6FF);
+            Draw2D.polyQuad(0, 0, w, 0, w, h, 0, h, c);
+        }
 
-        // wind-driven streaks, all moving the same way
-        int streaks = (int) (70 * amount);
+        int streaks = (int) (55 * amount);
+        double thick = Math.max(1.2, h / 480.0);
         for (int i = 0; i < streaks; i++) {
-            double speed = 90.0 + hash01(i * 5 + 1) * 160.0;
-            double x = ((hash01(i * 5) * (w + 120)) + time * speed) % (w + 120) - 60;
+            double speed = (w * 0.22) + hash01(i * 5 + 1) * (w * 0.35);
+            double span = w + 160;
+            double x = ((hash01(i * 5) * span) + time * speed) % span - 80;
             double y = hash01(i * 5 + 2) * h;
-            int len = 14 + (int) (hash01(i * 5 + 3) * 40);
-            int alpha = (int) ((40 + hash01(i * 5 + 4) * 70) * Math.min(1.0, amount + 0.3));
-            ctx.fill((int) x, (int) y, (int) x + len, (int) y + 1, Draw2D.argb(alpha, 0xFFFFFF));
+            double len = (w * 0.025) + hash01(i * 5 + 3) * (w * 0.065);
+            double dy = len * 0.12;
+            int alpha = (int) ((45 + hash01(i * 5 + 4) * 75) * Math.min(1.0, amount + 0.3));
+            Draw2D.thickLineGrad(x, y, Draw2D.argb(0, 0xFFFFFF), x + len, y + dy, Draw2D.argb(alpha, 0xFFFFFF), thick);
         }
     }
 
-    private void drawEdge(DrawContext ctx, int w, int h, double time) {
-        int size = Math.max(6, h * edgeSize.get() / 100);
-        int steps = 14;
-        double step = size / (double) steps;
-        double breathe = 0.92 + 0.08 * Math.sin(time * 1.1);
+    private void drawEdge(double w, double h, double time) {
+        double size = Math.max(12.0, h * edgeSize.get() / 100.0);
+        double breathe = 0.90 + 0.10 * Math.sin(time * 1.15);
+        int outerAlpha = Math.min(255, (int) Math.round(215 * (strength.get() / 100.0) * breathe));
+        if (outerAlpha <= 0) return;
 
-        for (int i = 0; i < steps; i++) {
-            double f = 1.0 - i / (double) steps;
-            int alpha = (int) (255 * (strength.get() / 100.0) * f * f * breathe);
-            if (alpha <= 0) continue;
-            alpha = Math.min(255, alpha);
-            int argb = (alpha << 24) | (200 << 16) | (230 << 8) | 255;
+        int edgeColor = Draw2D.argb(outerAlpha, 0xBCE4FF);
+        int midColor = Draw2D.argb(outerAlpha / 3, 0x8CC8FF);
+        int innerTrans = Draw2D.argb(0, 0x8CC8FF);
 
-            int a0 = (int) Math.round(i * step);
-            int a1 = (int) Math.round((i + 1) * step);
-            if (a1 <= a0) continue;
+        // Top & Bottom smooth two-stage frost gradients
+        Draw2D.polyQuadGrad(0, 0, edgeColor, w, 0, edgeColor, w, size * 0.45, midColor, 0, size * 0.45, midColor);
+        Draw2D.polyQuadGrad(0, size * 0.45, midColor, w, size * 0.45, midColor, w, size, innerTrans, 0, size, innerTrans);
 
-            ctx.fill(0, a0, w, a1, argb);
-            ctx.fill(0, h - a1, w, h - a0, argb);
-            ctx.fill(a0, 0, a1, h, argb);
-            ctx.fill(w - a1, 0, w - a0, h, argb);
+        Draw2D.polyQuadGrad(0, h - size, innerTrans, w, h - size, innerTrans, w, h - size * 0.45, midColor, 0, h - size * 0.45, midColor);
+        Draw2D.polyQuadGrad(0, h - size * 0.45, midColor, w, h - size * 0.45, midColor, w, h, edgeColor, 0, h, edgeColor);
+
+        // Left & Right smooth two-stage frost gradients
+        Draw2D.polyQuadGrad(0, 0, edgeColor, size * 0.45, 0, midColor, size * 0.45, h, midColor, 0, h, edgeColor);
+        Draw2D.polyQuadGrad(size * 0.45, 0, midColor, size, 0, innerTrans, size, h, innerTrans, size * 0.45, h, midColor);
+
+        Draw2D.polyQuadGrad(w - size, 0, innerTrans, w - size * 0.45, 0, midColor, w - size * 0.45, h, midColor, w - size, h, innerTrans);
+        Draw2D.polyQuadGrad(w - size * 0.45, 0, midColor, w, 0, edgeColor, w, h, edgeColor, w - size * 0.45, h, midColor);
+
+        // Delicate frost needles in the 4 corners
+        int crystalBase = Draw2D.argb(Math.min(255, (int) (outerAlpha * 0.85)), 0xEAF8FF);
+        int crystalTip = Draw2D.argb(0, 0xFFFFFF);
+        double needleLen = size * 1.15;
+        double needleW = Math.max(2.0, size * 0.09);
+
+        cornerNeedles(0, 0, 1, 1, needleLen, needleW, crystalBase, crystalTip);
+        cornerNeedles(w, 0, -1, 1, needleLen, needleW, crystalBase, crystalTip);
+        cornerNeedles(0, h, 1, -1, needleLen, needleW, crystalBase, crystalTip);
+        cornerNeedles(w, h, -1, -1, needleLen, needleW, crystalBase, crystalTip);
+    }
+
+    private static void cornerNeedles(double cx, double cy, double sx, double sy,
+                                      double len, double width, int baseC, int tipC) {
+        double[] angles = {0.22, 0.52, 0.78, 1.08, 1.35};
+        double[] scales = {0.85, 0.65, 1.0, 0.65, 0.85};
+        for (int i = 0; i < angles.length; i++) {
+            double a = angles[i];
+            double l = len * scales[i];
+            double dx = Math.cos(a) * sx;
+            double dy = Math.sin(a) * sy;
+            double px = -dy * width;
+            double py = dx * width;
+            Draw2D.triGrad(
+                cx + px, cy + py, baseC,
+                cx - px, cy - py, baseC,
+                cx + dx * l, cy + dy * l, tipC
+            );
         }
     }
 

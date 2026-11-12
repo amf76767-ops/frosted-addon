@@ -12,18 +12,15 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 /**
  * Frosts the category headers (every window whose title starts with "Frosted").
- *
- * Runs at the tail of WWindow.render, after the header child has been drawn, so
- * the effects sit on top of it. Everything is time based, so the header is
- * alive: snow drifts down, sparkles twinkle and a glint sweeps along the lower
- * edge. If anything goes wrong once, the effect switches itself off instead of
- * spamming the log every frame.
+ * Uses shared mutable Color instances to avoid per-frame allocations.
  */
 @Mixin(WWindow.class)
 public abstract class SnowCategoryMixin {
     @Shadow protected String title;
 
     private static boolean frosted$failed;
+    private static final Color C1 = new Color();
+    private static final Color C2 = new Color();
 
     @Inject(method = "render", at = @At("TAIL"), require = 0)
     private void frosted$snowHeader(GuiRenderer renderer, double mouseX, double mouseY, double delta,
@@ -43,27 +40,26 @@ public abstract class SnowCategoryMixin {
         if (hw < 8 || hh < 6) return;
         double t = (System.currentTimeMillis() % 1_000_000L) / 1000.0;
 
-        // Frozen gradient, four bands from light ice to deep blue.
-        int bands = 4;
-        double bandH = hh / bands;
-        for (int b = 0; b < bands; b++) {
-            double f = b / (double) (bands - 1);
-            renderer.quad(hx, hy + b * bandH, hw, bandH + 0.5,
-                new Color(frosted$lerp(100, 44, f), frosted$lerp(180, 100, f), frosted$lerp(250, 184, f), frosted$lerp(150, 175, f)));
-        }
-        renderer.quad(hx, hy + hh - 2, hw, 2, new Color(130, 205, 255, 220));
+        // Smooth top-to-bottom frozen ice gradient in a single quad
+        C1.set(105, 188, 255, 145);
+        C2.set(38, 92, 178, 175);
+        renderer.quad(hx, hy, hw, hh, C1, C1, C2, C2);
 
-        // Snow caps along the top edge.
+        C1.set(140, 215, 255, 225);
+        renderer.quad(hx, hy + hh - 2, hw, 2, C1);
+
+        // Snow caps along the top edge
+        C1.set(248, 252, 255, 235);
         for (double sx = hx + 2; sx < hx + hw - 2; sx += 4) {
             int r = (int) ((seed * 31 + (long) sx * 19) & 0xFF);
             double capW = Math.min(3 + (r >> 4) % 3, hx + hw - 2 - sx);
             double capH = 1 + r % 3;
             if (capW <= 0) continue;
-            renderer.quad(sx, hy, capW, capH, new Color(248, 252, 255, 235));
+            renderer.quad(sx, hy, capW, capH, C1);
         }
 
-        // Drifting snowflakes: fall through the header and fade at both ends.
-        int flakes = (int) Math.max(4, Math.min(12, hw / 24));
+        // Drifting snowflakes
+        int flakes = (int) Math.max(4, Math.min(10, hw / 26));
         for (int i = 0; i < flakes; i++) {
             long h = (seed * 0x9E3779B1L + i * 0x85EBCA6BL) & 0x7FFFFFFFL;
             double baseX = hx + 3 + (h % Math.max(1L, (long) (hw - 6)));
@@ -76,75 +72,77 @@ public abstract class SnowCategoryMixin {
             double fy = hy + fall * (hh - 2);
             int alpha = 40 + (int) (190 * Math.sin(Math.PI * fall));
             double size = ((h >> 24) % 3 == 0) ? 2 : 1;
-            renderer.quad(fx, fy, size, size, new Color(255, 255, 255, Math.max(0, Math.min(255, alpha))));
+            C1.set(255, 255, 255, Math.max(0, Math.min(255, alpha)));
+            renderer.quad(fx, fy, size, size, C1);
         }
 
-        // Twinkling sparkles with a small cross when they peak.
-        for (int i = 0; i < 5; i++) {
+        // Twinkling sparkles
+        for (int i = 0; i < 4; i++) {
             long h = (seed * 17L + i * 89L) & 0xFFL;
             double fx = hx + 3 + h % Math.max(1, (int) hw - 6);
             double fy = hy + 3 + (h >> 3) % Math.max(1, (int) hh - 5);
             int alpha = (int) (110 + 110 * Math.sin(t * 2.5 + i * 1.7));
             alpha = Math.max(0, Math.min(255, alpha));
-            renderer.quad(fx, fy, 1, 1, new Color(255, 255, 255, alpha));
+            C1.set(255, 255, 255, alpha);
+            renderer.quad(fx, fy, 1, 1, C1);
             if (alpha > 190) {
-                renderer.quad(fx - 1, fy, 3, 1, new Color(220, 240, 255, alpha / 2));
-                renderer.quad(fx, fy - 1, 1, 3, new Color(220, 240, 255, alpha / 2));
+                C2.set(220, 240, 255, alpha / 2);
+                renderer.quad(fx - 1, fy, 3, 1, C2);
+                renderer.quad(fx, fy - 1, 1, 3, C2);
             }
         }
 
-        // Glint sweeping along the lower edge.
+        // Smooth glint sweeping along the lower edge
         double cycle = hw + 60;
-        double gx = hx - 30 + (t * 45) % cycle;
-        int[] glint = {40, 100, 40};
+        double gx = hx - 30 + (t * 48) % cycle;
+        int[] glint = {45, 130, 45};
         for (int k = 0; k < glint.length; k++) {
             double x0 = Math.max(hx, gx + k * 10);
             double x1 = Math.min(hx + hw, gx + k * 10 + 10);
-            if (x1 > x0) renderer.quad(x0, hy + hh - 2, x1 - x0, 2, new Color(255, 255, 255, glint[k]));
+            if (x1 > x0) {
+                C1.set(255, 255, 255, glint[k]);
+                renderer.quad(x0, hy + hh - 2, x1 - x0, 2, C1);
+            }
         }
 
-        // Icicles hanging off the bottom edge.
+        // Icicles hanging off the bottom edge
+        C1.set(190, 230, 255, 200);
         for (double sx = hx + 5; sx < hx + hw - 5; sx += 11) {
             int r = (int) ((seed * 7 + (long) sx * 13) & 0xFF);
             double len = 1 + r % 4;
-            renderer.quad(sx, hy + hh, 1, len, new Color(190, 230, 255, 200));
+            renderer.quad(sx, hy + hh, 1, len, C1);
         }
     }
 
-    /** Icy outline, a soft inner glow and a drift of snow along the bottom edge. */
     private static void frosted$frame(GuiRenderer renderer, double x, double y, double w, double h, int seed) {
         if (w < 24 || h < 24) return;
         double t = (System.currentTimeMillis() % 1_000_000L) / 1000.0;
         double pulse = 0.65 + 0.35 * Math.sin(t * 1.4);
 
-        Color edge = new Color(150, 215, 255, (int) (120 * pulse));
-        renderer.quad(x, y, 1, h, edge);
-        renderer.quad(x + w - 1, y, 1, h, edge);
-        renderer.quad(x, y + h - 1, w, 1, edge);
+        C1.set(150, 215, 255, (int) (130 * pulse));
+        renderer.quad(x, y, 1, h, C1);
+        renderer.quad(x + w - 1, y, 1, h, C1);
+        renderer.quad(x, y + h - 1, w, 1, C1);
 
-        Color glow = new Color(150, 215, 255, (int) (30 * pulse));
-        renderer.quad(x + 1, y + h - 4, w - 2, 3, glow);
+        C1.set(150, 215, 255, 0);
+        C2.set(150, 215, 255, (int) (38 * pulse));
+        renderer.quad(x + 1, y + h - 5, w - 2, 4, C1, C1, C2, C2);
 
-        // snow drift: low bumps of varying height
-        for (double sx = x + 2; sx < x + w - 3; sx += 3) {
+        C1.set(248, 252, 255, 215);
+        for (double sx = x + 2; sx < x + w - 3; sx += 4) {
             int r = (int) ((seed * 13 + (long) (sx - x) * 29) & 0xFF);
             double bh = 1 + r % 3;
             double bw = Math.min(2 + (r >> 5) % 2, x + w - 2 - sx);
             if (bw <= 0) continue;
-            renderer.quad(sx, y + h - 1 - bh, bw, bh, new Color(248, 252, 255, 215));
+            renderer.quad(sx, y + h - 1 - bh, bw, bh, C1);
         }
 
-        // twinkling corners
         double tw = 0.5 + 0.5 * Math.sin(t * 2.2 + seed);
-        Color star = new Color(255, 255, 255, (int) (200 * tw));
-        renderer.quad(x - 1, y + h - 1, 3, 1, star);
-        renderer.quad(x, y + h - 2, 1, 3, star);
-        renderer.quad(x + w - 2, y + h - 1, 3, 1, star);
-        renderer.quad(x + w - 1, y + h - 2, 1, 3, star);
-    }
-
-    private static int frosted$lerp(int a, int b, double f) {
-        return (int) Math.round(a + (b - a) * f);
+        C1.set(255, 255, 255, (int) (210 * tw));
+        renderer.quad(x - 1, y + h - 1, 3, 1, C1);
+        renderer.quad(x, y + h - 2, 1, 3, C1);
+        renderer.quad(x + w - 2, y + h - 1, 3, 1, C1);
+        renderer.quad(x + w - 1, y + h - 2, 1, 3, C1);
     }
 
     private static java.lang.reflect.Field frosted$headerField;

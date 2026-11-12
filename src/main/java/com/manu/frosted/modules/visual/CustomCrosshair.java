@@ -1,7 +1,9 @@
 package com.manu.frosted.modules.visual;
 
 import com.manu.frosted.FrostedAddon;
+import com.manu.frosted.util.Draw2D;
 import meteordevelopment.meteorclient.events.render.Render2DEvent;
+import meteordevelopment.meteorclient.renderer.Renderer2D;
 import meteordevelopment.meteorclient.settings.BoolSetting;
 import meteordevelopment.meteorclient.settings.ColorSetting;
 import meteordevelopment.meteorclient.settings.DoubleSetting;
@@ -12,15 +14,14 @@ import meteordevelopment.meteorclient.settings.SettingGroup;
 import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.meteorclient.utils.render.color.SettingColor;
 import meteordevelopment.orbit.EventHandler;
-import net.minecraft.client.gui.DrawContext;
+import net.minecraft.entity.LivingEntity;
 
 /**
- * Custom crosshair drawn with DrawContext in GUI-scaled pixels, so it is exactly centred at
- * every GUI scale. Shapes: plus, dot, x, ring and a small snowflake. Optionally the gap opens
- * while you move and kicks when you attack.
+ * Custom hardware-rendered crosshair drawn at full native screen resolution via {@link Renderer2D#COLOR}.
+ * Shapes: Plus, Dot, X, Ring, Snowflake, Diamond.
  */
 public class CustomCrosshair extends Module {
-    public enum Shape { Plus, Dot, X, Ring, Snowflake }
+    public enum Shape { Plus, Dot, X, Ring, Snowflake, Diamond }
 
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
     private final SettingGroup sgMotion = settings.createGroup("Motion");
@@ -42,11 +43,19 @@ public class CustomCrosshair extends Module {
     );
 
     private final Setting<SettingColor> color = sgGeneral.add(new ColorSetting.Builder()
-        .name("color").defaultValue(new SettingColor(235, 245, 255, 255)).build()
+        .name("color").defaultValue(new SettingColor(225, 245, 255, 255)).build()
+    );
+
+    private final Setting<SettingColor> targetColor = sgGeneral.add(new ColorSetting.Builder()
+        .name("target-color").description("Colour when aiming at an entity.").defaultValue(new SettingColor(110, 210, 255, 255)).build()
     );
 
     private final Setting<Boolean> outline = sgGeneral.add(new BoolSetting.Builder()
         .name("outline").description("Dark outline so it stays readable on snow.").defaultValue(true).build()
+    );
+
+    private final Setting<Boolean> centerDot = sgGeneral.add(new BoolSetting.Builder()
+        .name("center-dot").description("Small dot in the centre of Plus, X and Ring.").defaultValue(false).build()
     );
 
     private final Setting<Boolean> dynamic = sgMotion.add(new BoolSetting.Builder()
@@ -58,7 +67,7 @@ public class CustomCrosshair extends Module {
     private boolean lastAttack;
 
     public CustomCrosshair() {
-        super(FrostedAddon.VISUAL, "custom-crosshair", "Replaces the vanilla crosshair.");
+        super(FrostedAddon.VISUAL, "custom-crosshair", "Replaces the vanilla crosshair with a crisp hardware-rendered crosshair.");
     }
 
     @Override
@@ -70,14 +79,16 @@ public class CustomCrosshair extends Module {
     @EventHandler
     private void onRender2D(Render2DEvent event) {
         if (mc.player == null || mc.currentScreen != null) return;
-        DrawContext ctx = event.drawContext;
-        if (ctx == null) return;
 
-        int cx = mc.getWindow().getScaledWidth() / 2;
-        int cy = mc.getWindow().getScaledHeight() / 2;
-        int th = thickness.get();
-        int size = Math.max(2, (int) Math.round(4 * scale.get()));
-        int baseGap = gap.get();
+        double sw = event.screenWidth > 0 ? event.screenWidth : mc.getWindow().getFramebufferWidth();
+        double sh = event.screenHeight > 0 ? event.screenHeight : mc.getWindow().getFramebufferHeight();
+        double guiScale = Math.max(1.0, sh / Math.max(1.0, mc.getWindow().getScaledHeight()));
+
+        double cx = sw * 0.5;
+        double cy = sh * 0.5;
+        double th = Math.max(1.5, thickness.get() * guiScale * 0.75);
+        double size = Math.max(3.0, 4.0 * scale.get() * guiScale);
+        double baseGap = gap.get() * guiScale;
 
         float targetGap = 0;
         if (dynamic.get()) {
@@ -95,81 +106,120 @@ public class CustomCrosshair extends Module {
             }
         }
         curGap += (targetGap - curGap) * 0.35f;
-        int g = baseGap + Math.round(curGap);
+        double g = baseGap + curGap * guiScale;
 
-        int main = argb(color.get());
-        int dark = 0xC0000000;
-        int o = outline.get() ? 1 : 0;
+        boolean onTarget = mc.targetedEntity instanceof LivingEntity;
+        int main = argb(onTarget ? targetColor.get() : color.get());
+        int glow = Draw2D.argb(65, main & 0xFFFFFF);
+        int dark = 0xC8050A14;
+        double outPx = Math.max(1.0, guiScale * 0.65);
 
-        // outline pass first (slightly larger), then the coloured pass
-        for (int pass = o; pass >= 0; pass--) {
+        Renderer2D.COLOR.begin();
+
+        // Soft icy halo around the centre
+        Draw2D.star(cx, cy, (size + g) * 0.85, th * 0.5, Draw2D.argb(0, main), glow);
+
+        int passes = outline.get() ? 1 : 0;
+        for (int pass = passes; pass >= 0; pass--) {
             int c = pass == 1 ? dark : main;
-            int e = pass; // growth in pixels for the outline
+            double e = pass == 1 ? outPx : 0.0;
             switch (shape.get()) {
-                case Plus -> plus(ctx, cx, cy, size, g, th, e, c);
-                case Dot -> {
-                    int half = Math.max(1, th);
-                    ctx.fill(cx - half - e, cy - half - e, cx + half + e, cy + half + e, c);
-                }
-                case X -> cross(ctx, cx, cy, size, g, th, e, c);
-                case Ring -> ring(ctx, cx, cy, size + 1, th, e, c);
-                case Snowflake -> snowflake(ctx, cx, cy, size + 2, th, e, c);
+                case Plus -> plus(cx, cy, size, g, th, e, c);
+                case Dot -> dot(cx, cy, th * 1.15, e, c);
+                case X -> cross(cx, cy, size, g, th, e, c);
+                case Ring -> ring(cx, cy, size + g * 0.45, th, e, c);
+                case Snowflake -> snowflake(cx, cy, size + g * 0.35 + guiScale, th, e, c);
+                case Diamond -> diamond(cx, cy, size + g * 0.45, th, e, c);
+            }
+            if (centerDot.get() && shape.get() != Shape.Dot && shape.get() != Shape.Snowflake) {
+                dot(cx, cy, th * 0.75, e, c);
+            }
+        }
+
+        Renderer2D.COLOR.render();
+    }
+
+    private static void dot(double cx, double cy, double r, double e, int c) {
+        double rad = r + e;
+        Draw2D.polyQuad(cx - rad, cy - rad, cx + rad, cy - rad, cx + rad, cy + rad, cx - rad, cy + rad, c);
+    }
+
+    private static void plus(double cx, double cy, double size, double g, double th, double e, int c) {
+        double half = th * 0.5 + e;
+        // Left & right arms
+        Draw2D.polyQuad(cx - g - size - e, cy - half, cx - g + e, cy - half, cx - g + e, cy + half, cx - g - size - e, cy + half, c);
+        Draw2D.polyQuad(cx + g - e, cy - half, cx + g + size + e, cy - half, cx + g + size + e, cy + half, cx + g - e, cy + half, c);
+        // Top & bottom arms
+        Draw2D.polyQuad(cx - half, cy - g - size - e, cx + half, cy - g - size - e, cx + half, cy - g + e, cx - half, cy - g + e, c);
+        Draw2D.polyQuad(cx - half, cy + g - e, cx + half, cy + g - e, cx + half, cy + g + size + e, cx - half, cy + g + size + e, c);
+    }
+
+    private static void cross(double cx, double cy, double size, double g, double th, double e, int c) {
+        double w = th + e * 2.0;
+        double d0 = Math.max(0.0, g - e * 0.7);
+        double d1 = g + size + e * 0.7;
+        double inv = 0.70710678;
+        for (int sx = -1; sx <= 1; sx += 2) {
+            for (int sy = -1; sy <= 1; sy += 2) {
+                Draw2D.thickLine(
+                    cx + sx * d0 * inv, cy + sy * d0 * inv,
+                    cx + sx * d1 * inv, cy + sy * d1 * inv,
+                    w, c
+                );
             }
         }
     }
 
-    private static void plus(DrawContext ctx, int cx, int cy, int size, int g, int th, int e, int c) {
-        int lo = -(th / 2);
-        int hi = lo + th;
-        ctx.fill(cx - g - size - e, cy + lo - e, cx - g + e, cy + hi + e, c);
-        ctx.fill(cx + g - e, cy + lo - e, cx + g + size + e, cy + hi + e, c);
-        ctx.fill(cx + lo - e, cy - g - size - e, cx + hi + e, cy - g + e, c);
-        ctx.fill(cx + lo - e, cy + g - e, cx + hi + e, cy + g + size + e, c);
-    }
-
-    private static void cross(DrawContext ctx, int cx, int cy, int size, int g, int th, int e, int c) {
-        for (int i = 0; i < size; i++) {
-            int d = g + i;
-            for (int sx = -1; sx <= 1; sx += 2) {
-                for (int sy = -1; sy <= 1; sy += 2) {
-                    int x = cx + sx * d;
-                    int y = cy + sy * d;
-                    ctx.fill(x - e, y - e, x + th + e, y + th + e, c);
-                }
-            }
+    private static void ring(double cx, double cy, double r, double th, double e, int c) {
+        int segs = 28;
+        double rIn = Math.max(0.5, r - th * 0.5 - e);
+        double rOut = r + th * 0.5 + e;
+        for (int i = 0; i < segs; i++) {
+            double a0 = i * 2.0 * Math.PI / segs;
+            double a1 = (i + 1) * 2.0 * Math.PI / segs;
+            double c0 = Math.cos(a0), s0 = Math.sin(a0);
+            double c1 = Math.cos(a1), s1 = Math.sin(a1);
+            Draw2D.polyQuad(
+                cx + c0 * rIn, cy + s0 * rIn,
+                cx + c1 * rIn, cy + s1 * rIn,
+                cx + c1 * rOut, cy + s1 * rOut,
+                cx + c0 * rOut, cy + s0 * rOut,
+                c
+            );
         }
     }
 
-    private static void ring(DrawContext ctx, int cx, int cy, int r, int th, int e, int c) {
-        int steps = Math.max(24, r * 8);
-        for (int i = 0; i < steps; i++) {
-            double a = i * 2.0 * Math.PI / steps;
-            int x = cx + (int) Math.round(Math.cos(a) * r);
-            int y = cy + (int) Math.round(Math.sin(a) * r);
-            ctx.fill(x - e, y - e, x + th + e, y + th + e, c);
+    private static void diamond(double cx, double cy, double r, double th, double e, int c) {
+        double rIn = Math.max(0.5, r - th * 0.6 - e);
+        double rOut = r + th * 0.6 + e;
+        double[] dx = {0, 1, 0, -1};
+        double[] dy = {-1, 0, 1, 0};
+        for (int i = 0; i < 4; i++) {
+            int n = (i + 1) & 3;
+            Draw2D.polyQuad(
+                cx + dx[i] * rIn, cy + dy[i] * rIn,
+                cx + dx[n] * rIn, cy + dy[n] * rIn,
+                cx + dx[n] * rOut, cy + dy[n] * rOut,
+                cx + dx[i] * rOut, cy + dy[i] * rOut,
+                c
+            );
         }
     }
 
-    private static void snowflake(DrawContext ctx, int cx, int cy, int r, int th, int e, int c) {
+    private static void snowflake(double cx, double cy, double r, double th, double e, int c) {
+        double w = th + e * 2.0;
         for (int arm = 0; arm < 6; arm++) {
             double a = arm * Math.PI / 3.0;
             double cos = Math.cos(a);
             double sin = Math.sin(a);
-            for (int i = 0; i <= r; i++) {
-                int x = cx + (int) Math.round(cos * i);
-                int y = cy + (int) Math.round(sin * i);
-                ctx.fill(x - e, y - e, x + th + e, y + th + e, c);
-            }
-            // a short branch pair at about 60 % of the arm
-            double bx = cos * r * 0.6;
-            double by = sin * r * 0.6;
+            Draw2D.thickLine(cx, cy, cx + cos * (r + e), cy + sin * (r + e), w, c);
+
+            double bx = cx + cos * r * 0.58;
+            double by = cy + sin * r * 0.58;
+            double bLen = r * 0.36 + e;
             for (int side = -1; side <= 1; side += 2) {
-                double ba = a + side * Math.toRadians(60);
-                for (int i = 1; i <= Math.max(1, r / 3); i++) {
-                    int x = cx + (int) Math.round(bx + Math.cos(ba) * i);
-                    int y = cy + (int) Math.round(by + Math.sin(ba) * i);
-                    ctx.fill(x - e, y - e, x + th + e, y + th + e, c);
-                }
+                double ba = a + side * Math.toRadians(58);
+                Draw2D.thickLine(bx, by, bx + Math.cos(ba) * bLen, by + Math.sin(ba) * bLen, w * 0.85, c);
             }
         }
     }

@@ -15,10 +15,12 @@ import meteordevelopment.meteorclient.utils.render.color.SettingColor;
 import meteordevelopment.orbit.EventHandler;
 
 import java.util.ArrayList;
-import java.util.Iterator;
 import java.util.List;
 
-/** Purely cosmetic jump rings. */
+/**
+ * 3D crystalline snowflake & shockwave ring when you jump.
+ * Combines glowing translucent ice facets with crisp geometric crystal branches.
+ */
 public class JumpCircles extends Module {
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
 
@@ -27,15 +29,15 @@ public class JumpCircles extends Module {
     );
 
     private final Setting<Integer> duration = sgGeneral.add(new IntSetting.Builder()
-        .name("duration-ms").defaultValue(600).min(100).sliderRange(100, 2000).build()
+        .name("duration-ms").defaultValue(750).min(100).sliderRange(100, 2000).build()
     );
 
     private final Setting<Integer> segments = sgGeneral.add(new IntSetting.Builder()
-        .name("segments").defaultValue(28).min(8).sliderRange(8, 64).build()
+        .name("segments").defaultValue(32).min(8).sliderRange(8, 64).build()
     );
 
     private final Setting<Boolean> rim = sgGeneral.add(new BoolSetting.Builder()
-        .name("outer-ring").description("Faint ring around the snowflake. Uses the segments setting.").defaultValue(true).build()
+        .name("outer-ring").description("Glowing shockwave ring around the snowflake.").defaultValue(true).build()
     );
 
     private final Setting<Boolean> grow = sgGeneral.add(new BoolSetting.Builder()
@@ -43,11 +45,11 @@ public class JumpCircles extends Module {
     );
 
     private final Setting<Boolean> thick = sgGeneral.add(new BoolSetting.Builder()
-        .name("thick-arms").description("Draw the main arms as three parallel lines.").defaultValue(true).build()
+        .name("thick-arms").description("Draw the main arms with glowing ice facets.").defaultValue(true).build()
     );
 
     private final Setting<Boolean> sparkles = sgGeneral.add(new BoolSetting.Builder()
-        .name("tip-sparkles").description("Glinting stars on the arm tips.").defaultValue(true).build()
+        .name("tip-sparkles").description("Glinting 3D stars on the arm tips.").defaultValue(true).build()
     );
 
     private final Setting<Boolean> onlySprint = sgGeneral.add(new BoolSetting.Builder()
@@ -55,7 +57,7 @@ public class JumpCircles extends Module {
     );
 
     private final Setting<SettingColor> color = sgGeneral.add(new ColorSetting.Builder()
-        .name("color").defaultValue(new SettingColor(120, 200, 255, 210)).build()
+        .name("color").defaultValue(new SettingColor(120, 200, 255, 220)).build()
     );
 
     private record Ring(double x, double y, double z, long start) {}
@@ -63,8 +65,17 @@ public class JumpCircles extends Module {
     private final List<Ring> rings = new ArrayList<>();
     private boolean wasOnGround = true;
 
+    private final Color cTip = new Color();
+    private final Color cCore = new Color();
+    private final Color cTwig = new Color();
+    private final Color cWeb = new Color();
+    private final Color cRim = new Color();
+    private final Color cFacet = new Color();
+    private final Color cFacetOut = new Color();
+    private final Color cStar = new Color();
+
     public JumpCircles() {
-        super(FrostedAddon.VISUAL, "jump-circles", "Draws a cosmetic snowflake when you jump.");
+        super(FrostedAddon.VISUAL, "jump-circles", "Draws a cosmetic 3D ice crystal snowflake when you jump.");
     }
 
     @Override
@@ -80,6 +91,7 @@ public class JumpCircles extends Module {
         boolean onGround = mc.player.isOnGround();
         if (wasOnGround && !onGround && mc.player.getVelocity().y > 0) {
             if (!onlySprint.get() || mc.player.isSprinting()) {
+                if (rings.size() >= 12) rings.remove(0);
                 rings.add(new Ring(mc.player.getX(), mc.player.getY(), mc.player.getZ(), System.currentTimeMillis()));
             }
         }
@@ -94,38 +106,39 @@ public class JumpCircles extends Module {
         if (rings.isEmpty()) return;
 
         long now = System.currentTimeMillis();
-        Color base = color.get();
+        SettingColor base = color.get();
+
+        double[] tipX = new double[6];
+        double[] tipZ = new double[6];
+        double[] webX = new double[6];
+        double[] webZ = new double[6];
 
         for (Ring ring : rings) {
             double p = Math.min(1.0, (now - ring.start) / (double) duration.get());
-            double radius = maxRadius.get() * (1.0 - Math.pow(1.0 - p, 3.0)); // ease-out
+            double radius = maxRadius.get() * (1.0 - Math.pow(1.0 - p, 3.2));
             if (radius < 0.03) continue;
 
-            double fade = 1.0 - p * p;
+            double fade = (1.0 - p) * (1.0 - p * 0.5);
             int a = clamp((int) (base.a * fade));
+            if (a <= 2) continue;
 
-            // Inner half of every arm is paler than the tip, like ice catching light.
-            Color tipColor = new Color(base.r, base.g, base.b, a);
-            Color coreColor = new Color(lighten(base.r, 0.55), lighten(base.g, 0.55), lighten(base.b, 0.55), a);
-            Color twigColor = new Color(lighten(base.r, 0.35), lighten(base.g, 0.35), lighten(base.b, 0.35), clamp((int) (a * 0.85)));
-            Color webColor = new Color(lighten(base.r, 0.25), lighten(base.g, 0.25), lighten(base.b, 0.25), clamp((int) (a * 0.40)));
-            Color rimColor = new Color(base.r, base.g, base.b, clamp((int) (a * 0.30)));
+            cTip.set(base.r, base.g, base.b, a);
+            cCore.set(lighten(base.r, 0.65), lighten(base.g, 0.65), lighten(base.b, 0.65), a);
+            cTwig.set(lighten(base.r, 0.40), lighten(base.g, 0.40), lighten(base.b, 0.40), clamp((int) (a * 0.88)));
+            cWeb.set(lighten(base.r, 0.30), lighten(base.g, 0.30), lighten(base.b, 0.30), clamp((int) (a * 0.48)));
+            cRim.set(base.r, base.g, base.b, clamp((int) (a * 0.42)));
+            cFacet.set(lighten(base.r, 0.35), lighten(base.g, 0.35), lighten(base.b, 0.35), clamp((int) (a * 0.28)));
+            cFacetOut.set(base.r, base.g, base.b, 0);
 
-            // Growth stages: branches and forks appear after the arms are out.
             boolean g = grow.get();
             double twigA = g ? smooth(0.04, 0.32, p) : 1.0;
             double twigB = g ? smooth(0.14, 0.46, p) : 1.0;
-            double fork = g ? smooth(0.28, 0.62, p) : 1.0;
-            double web = g ? smooth(0.18, 0.55, p) : 1.0;
+            double fork = g ? smooth(0.26, 0.60, p) : 1.0;
+            double web = g ? smooth(0.16, 0.52, p) : 1.0;
 
-            double y = ring.y + 0.05 + p * 0.2;           // drifts up a little while it fades
-            double spin = Math.toRadians(p * 40.0);
-            double lineGap = radius * 0.02;
-
-            double[] tipX = new double[6];
-            double[] tipZ = new double[6];
-            double[] webX = new double[6];
-            double[] webZ = new double[6];
+            double y = ring.y + 0.04 + p * 0.18;
+            double spin = Math.toRadians(p * 42.0);
+            double armHalfW = radius * 0.075;
 
             for (int arm = 0; arm < 6; arm++) {
                 double angle = spin + arm * (Math.PI / 3.0);
@@ -139,77 +152,109 @@ public class JumpCircles extends Module {
                 webX[arm] = ring.x + cos * radius * 0.55;
                 webZ[arm] = ring.z + sin * radius * 0.55;
 
-                // main arm in two tones, optionally three lines wide
-                for (int off = thick.get() ? -1 : 0; off <= (thick.get() ? 1 : 0); off++) {
-                    double ox = px * lineGap * off;
-                    double oz = pz * lineGap * off;
-                    line(event, ring.x + ox, y, ring.z + oz, webX[arm] + ox, webZ[arm] + oz, coreColor);
-                    line(event, webX[arm] + ox, y, webZ[arm] + oz, tipX[arm] + ox, tipZ[arm] + oz, tipColor);
+                // Translucent diamond facet along each arm
+                if (thick.get()) {
+                    double midX = ring.x + cos * radius * 0.48;
+                    double midZ = ring.z + sin * radius * 0.48;
+                    double leftX = midX + px * armHalfW;
+                    double leftZ = midZ + pz * armHalfW;
+                    double rightX = midX - px * armHalfW;
+                    double rightZ = midZ - pz * armHalfW;
+
+                    event.renderer.quad(
+                        ring.x, y, ring.z,
+                        leftX, y, leftZ,
+                        tipX[arm], y, tipZ[arm],
+                        rightX, y, rightZ,
+                        cCore, cFacet, cTip, cFacet
+                    );
+                    event.renderer.line(ring.x, y, ring.z, leftX, y, leftZ, cTwig);
+                    event.renderer.line(leftX, y, leftZ, tipX[arm], y, tipZ[arm], cTip);
+                    event.renderer.line(ring.x, y, ring.z, rightX, y, rightZ, cTwig);
+                    event.renderer.line(rightX, y, rightZ, tipX[arm], y, tipZ[arm], cTip);
                 }
 
-                // two pairs of side twigs, the inner one longer
-                twigs(event, ring.x, y, ring.z, angle, radius * 0.38, radius * 0.27 * twigA, twigColor);
-                twigs(event, ring.x, y, ring.z, angle, radius * 0.72, radius * 0.19 * twigB, twigColor);
+                // Bright central spine along the arm
+                event.renderer.line(ring.x, y, ring.z, webX[arm], y, webZ[arm], cCore, cTip);
+                event.renderer.line(webX[arm], y, webZ[arm], tipX[arm], y, tipZ[arm], cTip, cCore);
 
-                // fork at the tip, opening back toward the centre
-                double forkLen = radius * 0.14 * fork;
+                // Two pairs of crystalline side branches
+                twigs(event, ring.x, y, ring.z, angle, radius * 0.36, radius * 0.28 * twigA, cTwig);
+                twigs(event, ring.x, y, ring.z, angle, radius * 0.70, radius * 0.20 * twigB, cTwig);
+
+                // Diamond spearhead at the tip
+                double forkLen = radius * 0.15 * fork;
                 if (forkLen > 0.005) {
                     for (int side = -1; side <= 1; side += 2) {
-                        double fa = angle + side * Math.toRadians(145);
-                        line(event, tipX[arm], y, tipZ[arm],
-                            tipX[arm] + Math.cos(fa) * forkLen, tipZ[arm] + Math.sin(fa) * forkLen, twigColor);
+                        double fa = angle + side * Math.toRadians(142);
+                        event.renderer.line(tipX[arm], y, tipZ[arm],
+                            tipX[arm] + Math.cos(fa) * forkLen, y, tipZ[arm] + Math.sin(fa) * forkLen, cCore, cTwig);
                     }
                 }
             }
 
-            // Hexagonal web that links the arms at 55 % of the radius.
+            // Hexagonal web linking the arms at 55 % radius + translucent inner hex star
             if (web > 0.02) {
-                Color w = new Color(webColor.r, webColor.g, webColor.b, clamp((int) (webColor.a * web)));
+                cWeb.a = clamp((int) (a * 0.50 * web));
                 for (int k = 0; k < 6; k++) {
                     int n = (k + 1) % 6;
-                    line(event, webX[k], y, webZ[k], webX[n], webZ[n], w);
+                    event.renderer.line(webX[k], y, webZ[k], webX[n], y, webZ[n], cWeb);
                 }
             }
 
-            // Twinkling stars on the tips.
+            // 3D glinting stars on the tips (horizontal + vertical diamond cross)
             if (sparkles.get()) {
-                double star = radius * 0.10;
+                double star = radius * 0.11;
                 for (int k = 0; k < 6; k++) {
                     double tw = 0.55 + 0.45 * Math.sin(now * 0.018 + k * 1.7);
-                    Color sc = new Color(255, 255, 255, clamp((int) (a * tw)));
-                    line(event, tipX[k] - star, y, tipZ[k], tipX[k] + star, tipZ[k], sc);
-                    line(event, tipX[k], y, tipZ[k] - star, tipX[k], tipZ[k] + star, sc);
+                    cStar.set(255, 255, 255, clamp((int) (a * tw)));
+                    event.renderer.line(tipX[k] - star, y, tipZ[k], tipX[k] + star, y, tipZ[k], cStar);
+                    event.renderer.line(tipX[k], y, tipZ[k] - star, tipX[k], y, tipZ[k] + star, cStar);
+                    event.renderer.line(tipX[k], y - star * 0.8, tipZ[k], tipX[k], y + star * 0.8, tipZ[k], cStar);
                 }
             }
 
-            // Small double hexagon in the middle.
-            double hex = radius * 0.14;
+            // Inner glowing hexagonal core
+            double hex = radius * 0.16;
             for (int k = 0; k < 6; k++) {
                 double a1 = spin + Math.toRadians(30) + k * (Math.PI / 3.0);
                 double a2 = a1 + Math.PI / 3.0;
-                line(event,
-                    ring.x + Math.cos(a1) * hex, y, ring.z + Math.sin(a1) * hex,
-                    ring.x + Math.cos(a2) * hex, ring.z + Math.sin(a2) * hex, coreColor);
-                line(event,
-                    ring.x + Math.cos(a1) * hex * 0.5, y, ring.z + Math.sin(a1) * hex * 0.5,
-                    ring.x + Math.cos(a2) * hex * 0.5, ring.z + Math.sin(a2) * hex * 0.5, coreColor);
+                double x1 = ring.x + Math.cos(a1) * hex;
+                double z1 = ring.z + Math.sin(a1) * hex;
+                double x2 = ring.x + Math.cos(a2) * hex;
+                double z2 = ring.z + Math.sin(a2) * hex;
+                event.renderer.line(x1, y, z1, x2, y, z2, cCore);
             }
 
+            // Outer shockwave ring with soft translucent glow ribbon
             if (rim.get()) {
                 int n = segments.get();
-                double rr = radius * 1.06;
+                double rr = radius * 1.05;
+                double rrIn = radius * 0.96;
                 for (int k = 0; k < n; k++) {
                     double a1 = k * (2 * Math.PI / n);
                     double a2 = (k + 1) * (2 * Math.PI / n);
-                    line(event,
-                        ring.x + Math.cos(a1) * rr, y, ring.z + Math.sin(a1) * rr,
-                        ring.x + Math.cos(a2) * rr, ring.z + Math.sin(a2) * rr, rimColor);
+                    double c1 = Math.cos(a1), s1 = Math.sin(a1);
+                    double c2 = Math.cos(a2), s2 = Math.sin(a2);
+
+                    double ox1 = ring.x + c1 * rr, oz1 = ring.z + s1 * rr;
+                    double ox2 = ring.x + c2 * rr, oz2 = ring.z + s2 * rr;
+                    double ix1 = ring.x + c1 * rrIn, iz1 = ring.z + s1 * rrIn;
+                    double ix2 = ring.x + c2 * rrIn, iz2 = ring.z + s2 * rrIn;
+
+                    event.renderer.line(ox1, y, oz1, ox2, y, oz2, cRim);
+                    event.renderer.quad(
+                        ox1, y, oz1,
+                        ox2, y, oz2,
+                        ix2, y, iz2,
+                        ix1, y, iz1,
+                        cFacet, cFacet, cFacetOut, cFacetOut
+                    );
                 }
             }
         }
     }
 
-    /** Two twigs leaving the arm at {@code along} blocks from the centre. */
     private void twigs(Render3DEvent event, double cx, double y, double cz, double angle,
                        double along, double length, Color c) {
         if (length < 0.005) return;
@@ -217,12 +262,8 @@ public class JumpCircles extends Module {
         double bz = cz + Math.sin(angle) * along;
         for (int side = -1; side <= 1; side += 2) {
             double ta = angle + side * Math.toRadians(55);
-            line(event, bx, y, bz, bx + Math.cos(ta) * length, bz + Math.sin(ta) * length, c);
+            event.renderer.line(bx, y, bz, bx + Math.cos(ta) * length, y, bz + Math.sin(ta) * length, cCore, c);
         }
-    }
-
-    private void line(Render3DEvent event, double x1, double y, double z1, double x2, double z2, Color c) {
-        event.renderer.line(x1, y, z1, x2, y, z2, c);
     }
 
     private static double smooth(double edge0, double edge1, double x) {

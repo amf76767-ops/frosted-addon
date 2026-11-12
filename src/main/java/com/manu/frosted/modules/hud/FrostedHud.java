@@ -1,11 +1,12 @@
 package com.manu.frosted.modules.hud;
 
 import com.manu.frosted.FrostedAddon;
+import com.manu.frosted.modules.util.StaffList;
+import com.manu.frosted.util.Draw2D;
 import meteordevelopment.meteorclient.events.render.Render2DEvent;
 import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.renderer.Renderer2D;
 import meteordevelopment.meteorclient.renderer.text.TextRenderer;
-import com.manu.frosted.modules.util.StaffList;
 import meteordevelopment.meteorclient.settings.BoolSetting;
 import meteordevelopment.meteorclient.settings.ColorSetting;
 import meteordevelopment.meteorclient.settings.IntSetting;
@@ -32,7 +33,7 @@ import java.util.Locale;
  *
  * Every panel is draggable. Open chat, hold left click on a panel, drag it
  * anywhere — the position is stored in the panel's own settings and survives
- * restarts.
+ * restarts. All panel backgrounds are batched in a single GPU draw call.
  */
 public class FrostedHud extends Module {
     private final SettingGroup sgLook = settings.getDefaultGroup();
@@ -109,6 +110,7 @@ public class FrostedHud extends Module {
     private final Panel watermark = new Panel("watermark", sgPanels, true, 140, 6);
 
     private final List<Panel> panels = List.of(coords, session, ping, armor, staff, watermark);
+    private final Color tmpTextColor = new Color();
 
     private long start;
     private Panel dragging;
@@ -167,110 +169,119 @@ public class FrostedHud extends Module {
 
         int pad = padding.get();
         int lineGap = gap.get();
-        int lineHeight = (int) Math.ceil(TextRenderer.get().getHeight()) + lineGap;
+        TextRenderer text = TextRenderer.get();
+        double textH = text.getHeight();
+        int lineHeight = (int) Math.ceil(textH) + lineGap;
 
         int alpha = bgAlpha.get();
-        Color accent = new Color(accentColor.get().r, accentColor.get().g, accentColor.get().b, accentColor.get().a);
+        SettingColor acc = accentColor.get();
+        int accentArgb = Draw2D.argb(acc.a, (acc.r << 16) | (acc.g << 8) | acc.b);
 
-        drawPanel(coords, coordsLines(), pad, lineHeight, alpha, accent);
-        drawPanel(session, sessionLines(), pad, lineHeight, alpha, accent);
-        drawPanel(ping, pingLines(), pad, lineHeight, alpha, accent);
-        drawPanel(armor, armorLines(), pad, lineHeight, alpha, accent);
-        drawPanel(staff, staffLines(), pad, lineHeight, alpha, accent);
-        drawPanel(watermark, watermarkLines(), pad, lineHeight, alpha, accent);
-    }
+        List<List<Line>> allLines = List.of(
+            coordsLines(),
+            sessionLines(),
+            pingLines(),
+            armorLines(),
+            staffLines(),
+            watermarkLines()
+        );
 
-    private void drawPanel(Panel panel, List<Line> lines, int pad, int lineHeight,
-                           int alpha, Color accent) {
-        if (!panel.enabled.get()) {
-            panel.boundsValid = false;
-            return;
-        }
-        if (lines.isEmpty()) {
-            panel.boundsValid = false;
-            return;
-        }
-
-        TextRenderer text = TextRenderer.get();
+        // 1. Measure all active panels in one TextRenderer pass
         text.begin(1.0, false, true);
-        double width = 0;
-        for (Line line : lines) width = Math.max(width, text.getWidth(line.text));
-        text.end();
-
-        double panelWidth = width + pad * 2;
-        double panelHeight = lines.size() * lineHeight + pad * 2 - (lineHeight - text.getHeight());
-
-        double x = panel.x.get();
-        double y = panel.y.get();
-
-        panel.boundsX = x;
-        panel.boundsY = y;
-        panel.boundsW = panelWidth;
-        panel.boundsH = panelHeight;
-        panel.boundsValid = true;
-
-        frostedBody(x, y, panelWidth, panelHeight, corner.get(), alpha, accent);
-
-        text.begin(1.0, false, true);
-        for (int i = 0; i < lines.size(); i++) {
-            Line line = lines.get(i);
-            text.render(line.text, x + pad, y + pad + i * lineHeight, new Color(line.color), true);
-        }
-        text.end();
-    }
-
-    /**
-     * Frosted glass body built from one-pixel rows so it works through Renderer2D:
-     * vertical ice-blue gradient, rim light at the bottom, accent line and snow on top.
-     */
-    private void frostedBody(double x, double y, double w, double h, int radius, int alpha, Color accent) {
-        int r = Math.max(0, Math.min(radius, (int) (Math.min(w, h) / 2)));
-        Renderer2D.COLOR.begin();
-
-        int rows = (int) Math.ceil(h);
-        for (int row = 0; row < rows; row++) {
-            double inset = 0;
-            if (r > 0) {
-                if (row < r) {
-                    double dy = r - row - 0.5;
-                    inset = r - Math.sqrt(Math.max(0, r * r - dy * dy));
-                } else if (row >= h - r) {
-                    double dy = row - (h - r) + 0.5;
-                    inset = r - Math.sqrt(Math.max(0, r * r - dy * dy));
-                }
+        for (int p = 0; p < panels.size(); p++) {
+            Panel panel = panels.get(p);
+            List<Line> lines = allLines.get(p);
+            if (!panel.enabled.get() || lines.isEmpty()) {
+                panel.boundsValid = false;
+                continue;
             }
+            double width = 0;
+            for (Line line : lines) width = Math.max(width, text.getWidth(line.text));
+            panel.boundsX = panel.x.get();
+            panel.boundsY = panel.y.get();
+            panel.boundsW = width + pad * 2;
+            panel.boundsH = lines.size() * lineHeight + pad * 2 - (lineHeight - textH);
+            panel.boundsValid = true;
+        }
+        text.end();
 
-            double rowWidth = w - inset * 2;
-            if (rowWidth <= 0) continue;
+        // 2. Draw all panel backgrounds in one single Renderer2D batch
+        Renderer2D.COLOR.begin();
+        for (Panel panel : panels) {
+            if (!panel.boundsValid) continue;
+            frostedBody(panel.boundsX, panel.boundsY, panel.boundsW, panel.boundsH, corner.get(), alpha, accentArgb);
+        }
+        Renderer2D.COLOR.render();
 
-            double t = h <= 1 ? 0 : row / (h - 1);
-            int cr = (int) Math.round(26 + (8 - 26) * t);
-            int cg = (int) Math.round(46 + (14 - 46) * t);
-            int cb = (int) Math.round(80 + (30 - 80) * t);
-            double rowH = Math.min(1, h - row);
-            Renderer2D.COLOR.quad(x + inset, y + row, rowWidth, rowH, new Color(cr, cg, cb, alpha));
+        // 3. Render all panel text in one single TextRenderer batch
+        text.begin(1.0, false, true);
+        for (int p = 0; p < panels.size(); p++) {
+            Panel panel = panels.get(p);
+            if (!panel.boundsValid) continue;
+            List<Line> lines = allLines.get(p);
+            for (int i = 0; i < lines.size(); i++) {
+                Line line = lines.get(i);
+                Draw2D.setColor(tmpTextColor, line.color);
+                text.render(line.text, panel.boundsX + pad, panel.boundsY + pad + i * lineHeight, tmpTextColor, true);
+            }
+        }
+        text.end();
+    }
+
+    private void frostedBody(double x, double y, double w, double h, int radius, int alpha, int accentArgb) {
+        int r = Math.max(0, Math.min(radius, (int) (Math.min(w, h) / 2)));
+
+        // Soft drop shadow
+        int shadowArgb = Draw2D.argb(Math.min(110, alpha / 2), 0x040814);
+        Draw2D.polyQuad(x + r + 2, y + 3, x + w - r + 2, y + 3, x + w - r + 2, y + h + 3, x + r + 2, y + h + 3, shadowArgb);
+
+        // Top and bottom rounded caps + central hardware vertical gradient body
+        for (int row = 0; row < r; row++) {
+            double dy = r - row - 0.5;
+            double inset = r - Math.sqrt(Math.max(0, r * r - dy * dy));
+            double tTop = h <= 1 ? 0 : row / (h - 1);
+            int cTop = bodyColor(tTop, alpha);
+            Draw2D.polyQuad(x + inset, y + row, x + w - inset, y + row, x + w - inset, y + row + 1, x + inset, y + row + 1, cTop);
+
+            double botRow = h - r + row;
+            double dyBot = row + 0.5;
+            double insetBot = r - Math.sqrt(Math.max(0, r * r - dyBot * dyBot));
+            double tBot = h <= 1 ? 1 : botRow / (h - 1);
+            int cBot = bodyColor(tBot, alpha);
+            Draw2D.polyQuad(x + insetBot, y + botRow, x + w - insetBot, y + botRow, x + w - insetBot, y + botRow + 1, x + insetBot, y + botRow + 1, cBot);
         }
 
-        // Rim light along the bottom, accent line just below the top edge.
-        Renderer2D.COLOR.quad(x + r, y + h - 1, Math.max(0, w - r * 2), 1, new Color(140, 210, 255, Math.min(255, alpha / 2)));
-        Renderer2D.COLOR.quad(x + r, y + 2, Math.max(0, w - r * 2), 1, new Color(accent.r, accent.g, accent.b, accent.a));
+        double midH = Math.max(0, h - r * 2);
+        if (midH > 0) {
+            int cTop = bodyColor(r / Math.max(1.0, h - 1), alpha);
+            int cBot = bodyColor((h - r) / Math.max(1.0, h - 1), alpha);
+            Draw2D.polyQuadGrad(x, y + r, cTop, x + w, y + r, cTop, x + w, y + r + midH, cBot, x, y + r + midH, cBot);
+        }
+
+        // Subtle icy rim along left, right, and bottom
+        int rimArgb = Draw2D.argb(Math.min(180, alpha * 2 / 3), 0x8CD2FF);
+        Draw2D.polyQuad(x + r, y + h - 1, x + w - r, y + h - 1, x + w - r, y + h, x + r, y + h, rimArgb);
+        // Accent bar below top edge
+        Draw2D.polyQuad(x + r, y + 2, x + w - r, y + 2, x + w - r, y + 3, x + r, y + 3, accentArgb);
 
         if (shimmer.get()) {
             double span = Math.max(0, w - r * 2);
-            long cycle = 3200L;
+            long cycle = 3000L;
             double phase = ((System.currentTimeMillis() + (long) (x * 7)) % cycle) / (double) cycle;
-            double gx = phase * (span + 28) - 14;
+            double gx = phase * (span + 36) - 18;
             double x0 = Math.max(0, gx);
-            double x1 = Math.min(span, gx + 14);
+            double x1 = Math.min(span, gx + 18);
             if (x1 > x0) {
-                Renderer2D.COLOR.quad(x + r + x0, y + 2, x1 - x0, 1, new Color(255, 255, 255, 210));
-                Renderer2D.COLOR.quad(x + r + Math.max(0, gx - 6), y + 2, Math.max(0, x0 - Math.max(0, gx - 6)), 1, new Color(255, 255, 255, 90));
+                int whitePeak = Draw2D.argb(230, 0xFFFFFF);
+                int whiteEdge = Draw2D.argb(0, 0xFFFFFF);
+                double xm = (x0 + x1) * 0.5;
+                Draw2D.polyQuadGrad(x + r + x0, y + 1.5, whiteEdge, x + r + xm, y + 1.5, whitePeak, x + r + xm, y + 3.5, whitePeak, x + r + x0, y + 3.5, whiteEdge);
+                Draw2D.polyQuadGrad(x + r + xm, y + 1.5, whitePeak, x + r + x1, y + 1.5, whiteEdge, x + r + x1, y + 3.5, whiteEdge, x + r + xm, y + 3.5, whitePeak);
             }
         }
 
-        // Deterministic snow bumps so the cap never flickers.
         if (snowCap.get()) {
-            Color snow = new Color(248, 252, 255, 235);
+            int snow = Draw2D.argb(238, 0xF8FCFF);
             double start = x + Math.max(r, 2);
             double end = x + w - Math.max(r, 2);
             int index = 0;
@@ -279,11 +290,16 @@ public class FrostedHud extends Module {
                 double capW = Math.min(2 + (hash & 1), end - sx);
                 double capH = 1 + (hash >> 1) % 2;
                 if (capW <= 0) continue;
-                Renderer2D.COLOR.quad(sx, y, capW, capH, snow);
+                Draw2D.polyQuad(sx, y, sx + capW, y, sx + capW, y + capH, sx, y + capH, snow);
             }
         }
+    }
 
-        Renderer2D.COLOR.render();
+    private static int bodyColor(double t, int alpha) {
+        int cr = (int) Math.round(24 + (8 - 24) * t);
+        int cg = (int) Math.round(46 + (15 - 46) * t);
+        int cb = (int) Math.round(82 + (32 - 82) * t);
+        return Draw2D.argb(alpha, (cr << 16) | (cg << 8) | cb);
     }
 
     private List<Line> coordsLines() {
