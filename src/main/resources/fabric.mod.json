@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "id": "frosted",
+  "version": "${version}",
+  "name": "Frosted",
+  "description": "Basehunting, combat and quality-of-life modules for donutsmp.net: chunk finder, sus-chunk zones, deep player finder, light debug, staff list, region map, death coords, combat helpers and frosted visuals with a Meteor HUD pack.",
+  "authors": ["manu"],
+  "license": "MIT",
+  "environment": "client",
+  "mixins": ["frosted.mixins.json"],
+  "custom": {
+    "meteor-client:color": "110,180,255"
+  },
+  "entrypoints": {
+    "meteor": ["com.manu.frosted.FrostedAddon"]
+  },
+  "depends": {
+    "fabricloader": ">=${loader_version}",
+    "minecraft": "${minecraft_version}",
+    "java": ">=21",
+    "meteor-client": "*"
+  }
+}

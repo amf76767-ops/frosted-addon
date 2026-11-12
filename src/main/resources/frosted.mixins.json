@@ -1,0 +1,17 @@
+{
+  "required": true,
+  "minVersion": "0.8",
+  "package": "com.manu.frosted.mixin",
+  "compatibilityLevel": "JAVA_21",
+  "client": [
+    "CameraMixin",
+    "CrosshairMixin",
+    "GameRendererMixin",
+    "KnifeHandMixin",
+    "MinecraftClientMixin",
+    "SnowCategoryMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 0
+  }
+}
