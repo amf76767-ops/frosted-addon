@@ -4,8 +4,10 @@ import com.manu.frosted.FrostedAddon;
 import com.manu.frosted.util.Draw2D;
 import com.manu.frosted.util.Rand;
 import meteordevelopment.meteorclient.events.render.Render2DEvent;
+import meteordevelopment.meteorclient.events.render.Render3DEvent;
 import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.renderer.Renderer2D;
+import meteordevelopment.meteorclient.renderer.Renderer3D;
 import meteordevelopment.meteorclient.settings.BoolSetting;
 import meteordevelopment.meteorclient.settings.DoubleSetting;
 import meteordevelopment.meteorclient.settings.EnumSetting;
@@ -14,48 +16,48 @@ import meteordevelopment.meteorclient.settings.Setting;
 import meteordevelopment.meteorclient.settings.SettingGroup;
 import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.meteorclient.systems.modules.Modules;
+import meteordevelopment.meteorclient.utils.render.color.Color;
 import meteordevelopment.meteorclient.utils.render.color.SettingColor;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.particle.ParticleTypes;
 import net.minecraft.util.math.BlockPos;
+import net.minecraft.util.math.Vec3d;
 
 import java.util.HashMap;
 import java.util.Map;
 
 /**
- * Winter atmosphere with themes: snowfall with wind, twinkling sparkles, a frosted screen edge
- * with corner ice crystals, and smooth hardware-shaded sky effects (tint, stars, aurora curtains,
- * volumetric light rays, whiteout wind streaks).
+ * Winter atmosphere with themes: snowfall with wind, twinkling sparkles, a frosted screen edge,
+ * and a true 3D depth-tested sky dome (3D stars, high-altitude shooting stars and 3D aurora curtains
+ * that sit in the actual sky behind blocks and terrain).
  */
 public class FrostedAmbience extends Module {
     public enum Theme {
-        //      flakes wind  aurora sparkle haze  rays   stars  sky       cloud     tint      tintA
-        Tundra(6,   0.30, false, true,  0.00, false, false, 0xBEE1FA, 0xF0F8FF, 0xBEE1FA, 14),
-        Blizzard(18, 1.00, false, false, 0.42, false, false, 0x96AABE, 0xC8D2DC, 0xC8D2E1, 30),
-        Aurora(5,   0.15, true,  true,  0.00, false, true,  0x122355, 0x3C5A96, 0x0A1946, 36),
-        Glacier(5,  0.12, false, true,  0.00, true,  false, 0x78D7FF, 0xE1FAFF, 0x78D7FF, 14),
-        Midnight(4, 0.20, true,  true,  0.00, false, true,  0x0A0F2D, 0x28325A, 0x050A28, 42);
+        //      flakes wind  aurora sparkle haze  stars  sky       cloud     tint      tintA
+        Tundra(6,   0.30, false, true,  0.00, false, 0xBEE1FA, 0xF0F8FF, 0xBEE1FA, 10),
+        Blizzard(18, 1.00, false, false, 0.28, false, 0x96AABE, 0xC8D2DC, 0xC8D2E1, 22),
+        Aurora(5,   0.15, true,  true,  0.00, true,  0x122355, 0x3C5A96, 0x0A1946, 24),
+        Glacier(5,  0.12, true,  true,  0.00, false, 0x78D7FF, 0xE1FAFF, 0x78D7FF, 10),
+        Midnight(4, 0.20, true,  true,  0.00, true,  0x0A0F2D, 0x28325A, 0x050A28, 30);
 
         final int flakes;
         final double wind;
         final boolean aurora;
         final boolean sparkles;
         final double haze;
-        final boolean rays;
         final boolean stars;
         final int sky;
         final int cloud;
         final int tint;
         final int tintAlpha;
 
-        Theme(int flakes, double wind, boolean aurora, boolean sparkles, double haze, boolean rays,
+        Theme(int flakes, double wind, boolean aurora, boolean sparkles, double haze,
               boolean stars, int sky, int cloud, int tint, int tintAlpha) {
             this.flakes = flakes;
             this.wind = wind;
             this.aurora = aurora;
             this.sparkles = sparkles;
             this.haze = haze;
-            this.rays = rays;
             this.stars = stars;
             this.sky = sky;
             this.cloud = cloud;
@@ -74,7 +76,7 @@ public class FrostedAmbience extends Module {
         .defaultValue(Theme.Tundra).build());
 
     private final Setting<Integer> intensity = sgGeneral.add(new IntSetting.Builder()
-        .name("intensity").description("Scales snowfall and screen effects (5 = the theme's default).")
+        .name("intensity").description("Scales snowfall and sky effects (5 = the theme's default).")
         .defaultValue(5).min(1).sliderRange(1, 10).build());
 
     private final Setting<Boolean> snowfall = sgSnow.add(new BoolSetting.Builder()
@@ -99,16 +101,19 @@ public class FrostedAmbience extends Module {
         .name("overworld-only").defaultValue(true).build());
 
     private final Setting<Boolean> screenEffects = sgScreen.add(new BoolSetting.Builder()
-        .name("sky-effects").description("Tint, stars, aurora, light rays and whiteout streaks.").defaultValue(true).build());
+        .name("sky-effects").description("3D aurora curtains, 3D stars and shooting stars in the sky dome.").defaultValue(true).build());
+
+    private final Setting<Boolean> shootingStars = sgScreen.add(new BoolSetting.Builder()
+        .name("shooting-stars").description("Occasional shooting stars high up in the 3D sky dome.").defaultValue(true).build());
 
     private final Setting<Boolean> vignette = sgScreen.add(new BoolSetting.Builder()
         .name("frost-edge").description("Icy glow and corner frost crystals around the screen edge.").defaultValue(true).build());
 
     private final Setting<Integer> strength = sgScreen.add(new IntSetting.Builder()
-        .name("strength").defaultValue(35).min(0).sliderRange(0, 100).build());
+        .name("strength").defaultValue(30).min(0).sliderRange(0, 100).build());
 
     private final Setting<Integer> edgeSize = sgScreen.add(new IntSetting.Builder()
-        .name("size").description("Edge thickness in percent of the screen height.").defaultValue(14).min(4).sliderRange(4, 30).build());
+        .name("size").description("Edge thickness in percent of the screen height.").defaultValue(12).min(4).sliderRange(4, 30).build());
 
     private final Setting<Boolean> skyPreset = sgSky.add(new BoolSetting.Builder()
         .name("sky-preset")
@@ -120,11 +125,16 @@ public class FrostedAmbience extends Module {
     private boolean ambienceWasOff;
     private Theme appliedTheme;
 
+    private final Color c0 = new Color();
+    private final Color c1 = new Color();
+    private final Color c2 = new Color();
+    private final Color c3 = new Color();
+
     private double skyFade = 1.0;
     private int ticks;
 
     public FrostedAmbience() {
-        super(FrostedAddon.VISUAL, "frosted-ambience", "Winter themes: snowfall, wind, aurora, stars, ice sparkles and a frosted screen edge.");
+        super(FrostedAddon.VISUAL, "frosted-ambience", "Winter themes: snowfall, wind, 3D aurora, 3D sky stars and a frosted screen edge.");
     }
 
     @Override
@@ -194,14 +204,181 @@ public class FrostedAmbience extends Module {
         }
     }
 
-    // --------------------------------------------------------------- screen
+    // --------------------------------------------------------------- 3D sky dome
+
+    @EventHandler
+    private void onRender3D(Render3DEvent event) {
+        if (mc.player == null || mc.world == null || !screenEffects.get()) return;
+        if (overworldOnly.get() && !"overworld".equals(mc.world.getRegistryKey().getValue().getPath())) return;
+        if (skyFade <= 0.02) return;
+
+        Renderer3D r = event.depthRenderer != null ? event.depthRenderer : event.renderer;
+        Vec3d cam = mc.gameRenderer.getCamera().getCameraPos();
+        double cx = cam.x;
+        double cy = cam.y;
+        double cz = cam.z;
+
+        double time = (System.currentTimeMillis() % 1_000_000L) / 1000.0;
+        Theme t = theme.get();
+        double scale = Math.min(1.4, intensity.get() / 5.0);
+        double fade = skyFade * scale;
+
+        if (t.stars) {
+            drawSkyStars3D(r, cx, cy, cz, time, fade);
+            if (shootingStars.get()) {
+                drawShootingStars3D(r, cx, cy, cz, time, fade);
+            }
+        }
+        if (t.aurora) {
+            drawAurora3D(r, cx, cy, cz, time, fade);
+        }
+    }
+
+    private void drawSkyStars3D(Renderer3D r, double cx, double cy, double cz, double time, double fade) {
+        double domeR = 135.0;
+        for (int i = 0; i < 95; i++) {
+            double az = hash01(i * 3 + 1) * Math.PI * 2.0;
+            double el = Math.toRadians(14.0 + hash01(i * 3 + 2) * 72.0);
+            double cosEl = Math.cos(el);
+            double sx = cx + Math.cos(az) * cosEl * domeR;
+            double sy = cy + Math.sin(el) * domeR;
+            double sz = cz + Math.sin(az) * cosEl * domeR;
+
+            double twinkle = 0.45 + 0.55 * Math.sin(time * (1.5 + hash01(i * 3) * 2.4) + i);
+            int alpha = Math.min(255, (int) (220 * fade * twinkle));
+            if (alpha <= 12) continue;
+
+            int rgb = (i % 5 == 0) ? 0xA8E0FF : (i % 7 == 0 ? 0xD8C8FF : 0xFFFFFF);
+            c0.set((rgb >> 16) & 0xFF, (rgb >> 8) & 0xFF, rgb & 0xFF, alpha);
+
+            double size = (i % 8 == 0 ? 0.95 : 0.55) * (0.8 + 0.4 * twinkle);
+            r.line(sx - size, sy, sz, sx + size, sy, sz, c0);
+            r.line(sx, sy - size, sz, sx, sy + size, sz, c0);
+            r.line(sx, sy, sz - size, sx, sy, sz + size, c0);
+        }
+    }
+
+    /** High-altitude shooting stars that streak across the 3D sky dome overhead (behind blocks). */
+    private void drawShootingStars3D(Renderer3D r, double cx, double cy, double cz, double time, double fade) {
+        double domeR = 128.0;
+        for (int s = 0; s < 2; s++) {
+            double period = 6.5 + s * 4.2;
+            double cycle = Math.floor(time / period);
+            double phase = (time % period) / 1.15; // active for 1.15s per cycle
+            if (phase > 1.0) continue;
+
+            int seed = (int) (cycle * 31 + s * 97);
+            double startAz = hash01(seed + 1) * Math.PI * 2.0;
+            double startEl = Math.toRadians(38.0 + hash01(seed + 2) * 38.0);
+            double dirAz = startAz + (hash01(seed + 3) - 0.5) * 0.9;
+            double endEl = startEl - Math.toRadians(16.0 + hash01(seed + 4) * 12.0);
+
+            double headT = phase;
+            double tailT = Math.max(0.0, phase - 0.28);
+
+            double azH = startAz + (dirAz - startAz) * headT;
+            double elH = startEl + (endEl - startEl) * headT;
+            double azT = startAz + (dirAz - startAz) * tailT;
+            double elT = startEl + (endEl - startEl) * tailT;
+
+            double hx = cx + Math.cos(azH) * Math.cos(elH) * domeR;
+            double hy = cy + Math.sin(elH) * domeR;
+            double hz = cz + Math.sin(azH) * Math.cos(elH) * domeR;
+
+            double tx = cx + Math.cos(azT) * Math.cos(elT) * domeR;
+            double ty = cy + Math.sin(elT) * domeR;
+            double tz = cz + Math.sin(azT) * Math.cos(elT) * domeR;
+
+            double env = Math.sin(phase * Math.PI);
+            int headA = Math.min(255, (int) (245 * fade * env));
+            if (headA <= 8) continue;
+
+            c0.set(255, 255, 255, headA);
+            c1.set(140, 215, 255, 0);
+            r.line(hx, hy, hz, tx, ty, tz, c0, c1);
+
+            // Bright star head
+            double hs = 0.85 * env;
+            r.line(hx - hs, hy, hz, hx + hs, hy, hz, c0);
+            r.line(hx, hy - hs, hz, hx, hy + hs, hz, c0);
+        }
+    }
+
+    /** Waving 3D aurora borealis curtains high up in the sky dome. */
+    private void drawAurora3D(Renderer3D r, double cx, double cy, double cz, double time, double fade) {
+        int[] topRgb = {0x9868FF, 0x48C8FF, 0x58FFB4};
+        int[] botRgb = {0x42FFAA, 0x58FFEE, 0x78B4FF};
+        int segs = 48;
+
+        for (int band = 0; band < 3; band++) {
+            double baseR = 95.0 + band * 18.0;
+            double baseY = cy + 52.0 + band * 10.0;
+            double curtainH = 26.0 + band * 4.0;
+            double phase = band * 2.1;
+
+            int tr = (topRgb[band] >> 16) & 0xFF, tg = (topRgb[band] >> 8) & 0xFF, tb = topRgb[band] & 0xFF;
+            int br = (botRgb[band] >> 16) & 0xFF, bg = (botRgb[band] >> 8) & 0xFF, bb = botRgb[band] & 0xFF;
+
+            double prevX = 0, prevZ = 0, prevY = 0, prevH = 0;
+            int prevA = 0;
+
+            for (int i = 0; i <= segs; i++) {
+                double a = (i / (double) segs) * Math.PI * 2.0;
+                double waveR = baseR
+                    + Math.sin(a * 4.0 + time * 0.35 + phase) * 12.0
+                    + Math.cos(a * 7.0 - time * 0.48 + phase) * 5.5;
+                double x = cx + Math.cos(a) * waveR;
+                double z = cz + Math.sin(a) * waveR;
+                double y = baseY + Math.sin(a * 3.0 - time * 0.3 + phase) * 5.0;
+                double h = curtainH * (0.75 + 0.25 * Math.sin(a * 5.0 + time * 0.4 + phase));
+
+                double shimmer = 0.55 + 0.45 * Math.sin(a * 6.0 + time * 0.8 + band);
+                int alpha = Math.min(255, (int) (72 * fade * shimmer));
+
+                if (i > 0) {
+                    double midY0 = prevY + prevH * 0.38;
+                    double midY1 = y + h * 0.38;
+
+                    // Lower intense glow fold
+                    c0.set(br, bg, bb, 0);
+                    c1.set(br, bg, bb, prevA);
+                    c2.set(br, bg, bb, alpha);
+                    r.quad(
+                        prevX, prevY, prevZ,
+                        x, y, z,
+                        x, midY1, z,
+                        prevX, midY0, prevZ,
+                        c0, c0, c2, c1
+                    );
+
+                    // Upper curtain fading into the night sky
+                    c3.set(tr, tg, tb, 0);
+                    r.quad(
+                        prevX, midY0, prevZ,
+                        x, midY1, z,
+                        x, y + h, z,
+                        prevX, prevY + prevH, prevZ,
+                        c1, c2, c3, c3
+                    );
+                }
+
+                prevX = x;
+                prevZ = z;
+                prevY = y;
+                prevH = h;
+                prevA = alpha;
+            }
+        }
+    }
+
+    // --------------------------------------------------------------- 2D screen edge
 
     @EventHandler
     private void onRender2D(Render2DEvent event) {
         if (mc.player == null || mc.world == null || mc.currentScreen != null) return;
 
-        double w = event.screenWidth > 0 ? event.screenWidth : mc.getWindow().getFramebufferWidth();
-        double h = event.screenHeight > 0 ? event.screenHeight : mc.getWindow().getFramebufferHeight();
+        double w = Draw2D.screenW();
+        double h = Draw2D.screenH();
         long now = System.currentTimeMillis();
         double time = (now % 1_000_000L) / 1000.0;
         Theme t = theme.get();
@@ -210,24 +387,12 @@ public class FrostedAmbience extends Module {
         Renderer2D.COLOR.begin();
 
         if (screenEffects.get()) {
-            double outdoor = skyFade;
-            double pitch = mc.player.getPitch();
-            double yaw = mc.player.getYaw();
-            double ppd = h / 70.0;
-
-            int tintA = (int) (t.tintAlpha * Math.min(1.5, scale) * (0.40 + 0.60 * outdoor));
+            int tintA = (int) (t.tintAlpha * Math.min(1.4, scale) * (0.35 + 0.65 * skyFade));
             if (tintA > 0) {
                 int topTint = Draw2D.argb(tintA, t.tint);
-                int botTint = Draw2D.argb(tintA / 3, Draw2D.shade(t.tint, 0.2));
+                int botTint = Draw2D.argb(tintA / 4, Draw2D.shade(t.tint, 0.2));
                 Draw2D.polyQuadGrad(0, 0, topTint, w, 0, topTint, w, h, botTint, 0, h, botTint);
             }
-
-            double lookUp = clamp01((18.0 - pitch) / 45.0);
-
-            if (t.stars) drawStars(w, h, time, yaw, pitch, ppd, outdoor * lookUp);
-            if (t.aurora) drawAurora(w, h, time, yaw, pitch, ppd, outdoor * clamp01((28.0 - pitch) / 42.0) * Math.min(1.3, scale));
-            if (t.rays) drawRays(w, h, time, outdoor * Math.min(1.3, scale));
-            if (t.haze > 0) drawWhiteout(w, h, time, t, scale, outdoor);
         }
 
         if (vignette.get()) drawEdge(w, h, time);
@@ -235,136 +400,10 @@ public class FrostedAmbience extends Module {
         Renderer2D.COLOR.render();
     }
 
-    private void drawStars(double w, double h, double time, double yaw, double pitch, double ppd, double fade) {
-        if (fade <= 0.01) return;
-        double dotSize = Math.max(1.5, h / 420.0);
-
-        for (int i = 0; i < 85; i++) {
-            double az = hash01(i * 3 + 1) * 360.0;
-            double el = 6.0 + hash01(i * 3 + 2) * 70.0;
-            double dAz = ((az - yaw + 540.0) % 360.0) - 180.0;
-            double x = w * 0.5 + dAz * ppd;
-            double y = h * 0.5 - (el - pitch) * ppd;
-            if (x < 0 || x >= w || y < 0 || y >= h) continue;
-
-            double twinkle = 0.50 + 0.50 * Math.sin(time * (1.6 + hash01(i * 3) * 2.6) + i);
-            int alpha = (int) (220 * fade * twinkle);
-            if (alpha <= 10) continue;
-
-            int rgb = (i % 5 == 0) ? 0xA8E0FF : (i % 7 == 0 ? 0xD8C8FF : 0xFFFFFF);
-            if (i % 8 == 0 && twinkle > 0.65) {
-                Draw2D.star(x, y, dotSize * 3.4, dotSize * 0.7, Draw2D.argb(alpha, 0xFFFFFF), Draw2D.argb(alpha / 2, rgb));
-            } else {
-                int c = Draw2D.argb(alpha, rgb);
-                Draw2D.polyQuad(x - dotSize * 0.5, y - dotSize * 0.5, x + dotSize * 0.5, y - dotSize * 0.5,
-                    x + dotSize * 0.5, y + dotSize * 0.5, x - dotSize * 0.5, y + dotSize * 0.5, c);
-            }
-        }
-    }
-
-    private void drawAurora(double w, double h, double time, double yaw, double pitch, double ppd, double fade) {
-        if (fade <= 0.01) return;
-
-        int[] topColors = {0x9868FF, 0x48C8FF, 0x60FFB4};
-        int[] botColors = {0x42FFAA, 0x58FFEE, 0x78B4FF};
-        double[] elevations = {40.0, 47.0, 33.0};
-        int cols = 42;
-        double stepX = w / cols;
-
-        for (int band = 0; band < topColors.length; band++) {
-            double phase = band * 1.85;
-            double prevX = 0;
-            double prevTop = 0;
-            double prevMid = 0;
-            double prevBot = 0;
-            int prevMidC = 0;
-            int prevGlowC = 0;
-
-            for (int c = 0; c <= cols; c++) {
-                double x = c * stepX;
-                double az = yaw + (x - w * 0.5) / ppd;
-                double wave = Math.sin(az * 0.085 + time * 0.38 + phase) * 6.2
-                    + Math.sin(az * 0.22 - time * 0.52 + phase) * 2.2;
-                double top = h * 0.5 - (elevations[band] + wave - pitch) * ppd;
-                double len = (15.0 + 8.5 * Math.sin(az * 0.055 - time * 0.24 + phase)) * ppd;
-                double mid = top + len * 0.68;
-                double bot = top + len;
-
-                double shimmer = 0.65 + 0.35 * Math.sin(az * 0.16 + time * 0.9 + band);
-                int alphaMid = (int) Math.round(78 * fade * shimmer);
-                int alphaGlow = (int) Math.round(96 * fade * shimmer);
-                int midC = Draw2D.argb(alphaMid, topColors[band]);
-                int glowC = Draw2D.argb(alphaGlow, botColors[band]);
-                int transTop = Draw2D.argb(0, topColors[band]);
-                int transBot = Draw2D.argb(0, botColors[band]);
-
-                if (c > 0 && !(Math.max(prevBot, bot) < 0 || Math.min(prevTop, top) > h)) {
-                    // Upper curtain: fades in from transparent top to glowing middle
-                    Draw2D.polyQuadGrad(prevX, prevTop, transTop, x, top, transTop, x, mid, midC, prevX, prevMid, prevMidC);
-                    // Lower curtain core: intense aurora ribbon near the bottom fold
-                    Draw2D.polyQuadGrad(prevX, prevMid, prevMidC, x, mid, midC, x, bot, glowC, prevX, prevBot, prevGlowC);
-                    // Soft bottom fringe fadeout
-                    Draw2D.polyQuadGrad(prevX, prevBot, prevGlowC, x, bot, glowC, x, bot + len * 0.22, transBot, prevX, prevBot + len * 0.22, transBot);
-                }
-
-                prevX = x;
-                prevTop = top;
-                prevMid = mid;
-                prevBot = bot;
-                prevMidC = midC;
-                prevGlowC = glowC;
-            }
-        }
-    }
-
-    private void drawRays(double w, double h, double time, double fade) {
-        if (fade <= 0.01) return;
-        for (int i = 0; i < 5; i++) {
-            double xTop = w * (0.10 + 0.20 * i) + Math.sin(time * 0.12 + i * 1.4) * (w * 0.03);
-            double topW = (w * 0.032) + (w * 0.018) * Math.sin(time * 0.19 + i);
-            double drift = h * 0.42;
-            double bottomW = topW * 2.4;
-
-            int topAlpha = (int) Math.round((24 + 12 * Math.sin(time * 0.45 + i * 1.9)) * fade);
-            int cTop = Draw2D.argb(topAlpha, 0xDDF6FF);
-            int cBot = Draw2D.argb(0, 0x96D8FF);
-
-            Draw2D.polyQuadGrad(
-                xTop, 0, cTop,
-                xTop + topW, 0, cTop,
-                xTop + drift + bottomW, h, cBot,
-                xTop + drift, h, cBot
-            );
-        }
-    }
-
-    private void drawWhiteout(double w, double h, double time, Theme t, double scale, double outdoor) {
-        double amount = t.haze * Math.min(1.5, scale) * (0.35 + 0.65 * outdoor);
-
-        int haze = (int) (62 * amount * (0.9 + 0.1 * Math.sin(time * 1.3)));
-        if (haze > 0) {
-            int c = Draw2D.argb(haze, 0xEEF6FF);
-            Draw2D.polyQuad(0, 0, w, 0, w, h, 0, h, c);
-        }
-
-        int streaks = (int) (55 * amount);
-        double thick = Math.max(1.2, h / 480.0);
-        for (int i = 0; i < streaks; i++) {
-            double speed = (w * 0.22) + hash01(i * 5 + 1) * (w * 0.35);
-            double span = w + 160;
-            double x = ((hash01(i * 5) * span) + time * speed) % span - 80;
-            double y = hash01(i * 5 + 2) * h;
-            double len = (w * 0.025) + hash01(i * 5 + 3) * (w * 0.065);
-            double dy = len * 0.12;
-            int alpha = (int) ((45 + hash01(i * 5 + 4) * 75) * Math.min(1.0, amount + 0.3));
-            Draw2D.thickLineGrad(x, y, Draw2D.argb(0, 0xFFFFFF), x + len, y + dy, Draw2D.argb(alpha, 0xFFFFFF), thick);
-        }
-    }
-
     private void drawEdge(double w, double h, double time) {
         double size = Math.max(12.0, h * edgeSize.get() / 100.0);
         double breathe = 0.90 + 0.10 * Math.sin(time * 1.15);
-        int outerAlpha = Math.min(255, (int) Math.round(215 * (strength.get() / 100.0) * breathe));
+        int outerAlpha = Math.min(255, (int) Math.round(210 * (strength.get() / 100.0) * breathe));
         if (outerAlpha <= 0) return;
 
         int edgeColor = Draw2D.argb(outerAlpha, 0xBCE4FF);
@@ -422,10 +461,6 @@ public class FrostedAmbience extends Module {
         n *= 0x85EBCA6B;
         n ^= n >>> 13;
         return (n & 0x7FFFFFFF) / (double) 0x7FFFFFFF;
-    }
-
-    private static double clamp01(double v) {
-        return Math.max(0.0, Math.min(1.0, v));
     }
 
     // ------------------------------------------------------------------ sky

@@ -1,22 +1,29 @@
 package com.manu.frosted.modules.util;
 
 import com.manu.frosted.FrostedAddon;
+import com.manu.frosted.util.Draw2D;
+import com.manu.frosted.util.FrostedPanel;
 import meteordevelopment.meteorclient.events.render.Render2DEvent;
+import meteordevelopment.meteorclient.events.world.TickEvent;
+import meteordevelopment.meteorclient.renderer.Renderer2D;
+import meteordevelopment.meteorclient.renderer.text.TextRenderer;
 import meteordevelopment.meteorclient.settings.*;
 import meteordevelopment.meteorclient.systems.modules.Module;
+import meteordevelopment.meteorclient.utils.render.color.Color;
 import meteordevelopment.orbit.EventHandler;
-import net.minecraft.client.gui.DrawContext;
+import net.minecraft.client.gui.screen.ChatScreen;
+import org.lwjgl.glfw.GLFW;
+
+import java.util.Locale;
 
 /**
- * DonutSMP region map. The server splits the world into 9x9 cells of 50,000
- * blocks centred on 0,0; each cell belongs to a region type. The HUD draws the
- * grid, highlights your current cell and puts a marker at your exact position
- * inside it.
- *
- * Region table and colours match the server's own region layout.
+ * DonutSMP 9x9 region radar & map in a frosted-glass HUD panel.
+ * Shows all 81 regions with color-coded server zones, optional region IDs,
+ * glowing active cell highlight, directional FOV cone + player arrow,
+ * and a live region/coordinate header & footer. Drag in chat to reposition.
  */
 public class RegionMap extends Module {
-    public enum Placement { TopLeft, TopRight, BottomLeft, BottomRight }
+    public enum Placement { TopLeft, TopRight, BottomLeft, BottomRight, Custom }
 
     private static final int[][] REGIONS = {
         {82, 5}, {100, 3}, {101, 3}, {102, 3}, {103, 2}, {104, 2}, {105, 2}, {106, 2}, {91, 2},
@@ -32,7 +39,12 @@ public class RegionMap extends Module {
 
     private static final String[] LEGEND = {"EU-C", "EU-W", "NA-E", "NA-W", "Asia", "Oce"};
     private static final int[] COLORS = {
-        0x9FCE63, 0x00A663, 0x4FADEA, 0x2F6EBA, 0xF5C242, 0xFC8803
+        0x7AD96A, // EU-C (Fresh Emerald Green)
+        0x18B87A, // EU-W (Teal Jade)
+        0x52B6FF, // NA-E (Ice Sky Blue)
+        0x3B78E7, // NA-W (Royal Cobalt)
+        0xF8C948, // Asia (Golden Amber)
+        0xFF8B28  // Oce  (Sunset Orange)
     };
 
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
@@ -43,126 +55,371 @@ public class RegionMap extends Module {
         .build()
     );
 
+    private final Setting<Double> scale = sgGeneral.add(new DoubleSetting.Builder()
+        .name("scale")
+        .description("Overall scale of the region map.")
+        .defaultValue(1.0)
+        .min(0.6)
+        .sliderRange(0.6, 2.2)
+        .build()
+    );
+
     private final Setting<Integer> cellSize = sgGeneral.add(new IntSetting.Builder()
         .name("cell-size")
-        .description("Pixels per region cell.")
-        .defaultValue(10)
-        .min(4)
-        .sliderRange(4, 20)
+        .description("Base pixels per region cell.")
+        .defaultValue(18)
+        .min(10)
+        .sliderRange(10, 32)
         .build()
     );
 
     private final Setting<Integer> opacity = sgGeneral.add(new IntSetting.Builder()
         .name("opacity")
-        .description("Region fill opacity, 0-255.")
-        .defaultValue(160)
-        .min(10)
-        .sliderRange(10, 255)
-        .build()
-    );
-
-    private final Setting<Boolean> showLegend = sgGeneral.add(new BoolSetting.Builder()
-        .name("legend")
-        .defaultValue(true)
+        .description("Region cell fill opacity, 0-255.")
+        .defaultValue(195)
+        .min(40)
+        .sliderRange(40, 255)
         .build()
     );
 
     private final Setting<Boolean> showNumbers = sgGeneral.add(new BoolSetting.Builder()
         .name("region-ids")
-        .description("Draw the region ID in each cell.")
-        .defaultValue(false)
+        .description("Draw the region ID number inside each cell.")
+        .defaultValue(true)
+        .build()
+    );
+
+    private final Setting<Boolean> showLegend = sgGeneral.add(new BoolSetting.Builder()
+        .name("legend")
+        .description("Show the region zone legend below the grid.")
+        .defaultValue(true)
         .build()
     );
 
     private final Setting<Boolean> showCoordinates = sgGeneral.add(new BoolSetting.Builder()
         .name("show-coordinates")
-        .description("Draw your coordinates under the map.")
+        .description("Draw your coordinates and cell border distance in the footer.")
         .defaultValue(true)
         .build()
     );
 
+    private final Setting<Integer> customX = sgGeneral.add(new IntSetting.Builder()
+        .name("custom-x")
+        .defaultValue(16)
+        .sliderRange(0, 3840)
+        .visible(() -> placement.get() == Placement.Custom)
+        .build()
+    );
+
+    private final Setting<Integer> customY = sgGeneral.add(new IntSetting.Builder()
+        .name("custom-y")
+        .defaultValue(16)
+        .sliderRange(0, 2160)
+        .visible(() -> placement.get() == Placement.Custom)
+        .build()
+    );
+
+    private final Color tmp = new Color();
+    private final Color c1 = new Color();
+    private final Color c2 = new Color();
+    private final Color c3 = new Color();
+
+    private boolean dragging;
+    private double dragOffX, dragOffY;
+    private double lastX, lastY, lastW = 180, lastH = 200;
+
     public RegionMap() {
-        super(FrostedAddon.UTIL, "region-map", "DonutSMP 9x9 region grid with your position.");
+        super(FrostedAddon.UTIL, "region-map", "Frosted DonutSMP 9x9 region map with live radar marker, region IDs and zone legend.");
+    }
+
+    @Override
+    public String getInfoString() {
+        if (mc.player == null) return null;
+        int cx = cell(mc.player.getX());
+        int cz = cell(mc.player.getZ());
+        if (cx >= 0 && cx < 9 && cz >= 0 && cz < 9) {
+            int[] reg = REGIONS[cz * 9 + cx];
+            return "#" + reg[0] + " " + LEGEND[reg[1]];
+        }
+        return null;
+    }
+
+    @EventHandler
+    private void onTick(TickEvent.Post event) {
+        if (mc.player == null || !(mc.currentScreen instanceof ChatScreen)) {
+            dragging = false;
+            return;
+        }
+
+        double mx = mc.mouse.getX();
+        double my = mc.mouse.getY();
+        boolean down = GLFW.glfwGetMouseButton(mc.getWindow().getHandle(), GLFW.GLFW_MOUSE_BUTTON_LEFT) == GLFW.GLFW_PRESS;
+        if (!down) {
+            dragging = false;
+            return;
+        }
+
+        if (!dragging && mx >= lastX && mx <= lastX + lastW && my >= lastY && my <= lastY + lastH) {
+            dragging = true;
+            dragOffX = mx - lastX;
+            dragOffY = my - lastY;
+            placement.set(Placement.Custom);
+        }
+
+        if (dragging) {
+            customX.set(Math.max(0, (int) Math.round(mx - dragOffX)));
+            customY.set(Math.max(0, (int) Math.round(my - dragOffY)));
+        }
     }
 
     @EventHandler
     private void onRender2D(Render2DEvent event) {
         if (mc.player == null || mc.world == null) return;
 
-        DrawContext ctx = event.drawContext;
-        int cs = cellSize.get();
-        int grid = cs * 9;
-        int pad = 4;
-        int legendHeight = showLegend.get() ? 14 : 0;
-        int panelW = grid + pad * 2;
-        int panelH = grid + pad * 2 + legendHeight;
+        double s = scale.get() * Math.max(1.0, Draw2D.guiScale() * 0.5);
+        double cs = cellSize.get() * s;
+        double gap = Math.max(1.0, 1.4 * s);
+        double grid = cs * 9;
+        double pad = 7 * s;
 
-        int x = switch (placement.get()) {
-            case TopLeft, BottomLeft -> 6;
-            case TopRight, BottomRight -> event.screenWidth - panelW - 6;
+        TextRenderer tr = TextRenderer.get();
+        tr.begin(s * 0.78, false, true);
+        double headerH = tr.getHeight(true) + 5 * s;
+        tr.end();
+
+        double legendH = showLegend.get() ? (14 * s) : 0;
+        double coordsH = showCoordinates.get() ? (13 * s) : 0;
+
+        double panelW = grid + pad * 2;
+        double panelH = pad * 2 + headerH + grid + legendH + coordsH;
+
+        double sw = Draw2D.screenW();
+        double sh = Draw2D.screenH();
+        double margin = 10 * s;
+
+        double x = switch (placement.get()) {
+            case TopLeft, BottomLeft -> margin;
+            case TopRight, BottomRight -> sw - panelW - margin;
+            case Custom -> Math.min(customX.get(), Math.max(0, sw - panelW - 4));
         };
-        int y = switch (placement.get()) {
-            case TopLeft, TopRight -> 6;
-            case BottomLeft, BottomRight -> event.screenHeight - panelH - 6;
+        double y = switch (placement.get()) {
+            case TopLeft, TopRight -> margin;
+            case BottomLeft, BottomRight -> sh - panelH - margin;
+            case Custom -> Math.min(customY.get(), Math.max(0, sh - panelH - 4));
         };
 
-        ctx.fill(x, y, x + panelW, y + panelH, 0xB0000000);
+        lastX = x;
+        lastY = y;
+        lastW = panelW;
+        lastH = panelH;
 
         int cellX = cell(mc.player.getX());
         int cellZ = cell(mc.player.getZ());
-        int alpha = opacity.get();
+        boolean inBounds = cellX >= 0 && cellX < 9 && cellZ >= 0 && cellZ < 9;
+        int activeId = inBounds ? REGIONS[cellZ * 9 + cellX][0] : -1;
+        int activeZone = inBounds ? REGIONS[cellZ * 9 + cellX][1] : -1;
+        int accent = inBounds ? COLORS[activeZone] : 0x6EBEFF;
+
+        double time = (System.currentTimeMillis() % 1_000_000L) / 1000.0;
+
+        // ---- 1. Geometry pass
+        Renderer2D.COLOR.begin();
+        FrostedPanel.draw(x, y, panelW, panelH, 7 * s, s, 220, dragging ? 0xFFFFFF : accent, true, true, true);
+
+        // Header status dot + divider
+        double dotR = 2.4 * s;
+        double dotY = y + pad + (headerH - 4 * s) * 0.5;
+        Draw2D.roundRect(x + pad + 2 * s, dotY - dotR, dotR * 2, dotR * 2, dotR,
+            Draw2D.argb(240, accent), Draw2D.argb(240, accent));
+        Draw2D.rectH(x + pad, y + pad + headerH - 3 * s, panelW - pad * 2, Math.max(1.0, s * 0.8),
+            Draw2D.argb(175, accent), Draw2D.argb(0, accent));
+
+        double gx = x + pad;
+        double gy = y + pad + headerH;
+
+        // Subtle recessed backing behind the 9x9 grid
+        Draw2D.roundRect(gx - 2 * s, gy - 2 * s, grid + 4 * s, grid + 4 * s, 4 * s,
+            Draw2D.argb(150, 0x060B14), Draw2D.argb(180, 0x04070E));
+
+        int fillAlpha = opacity.get();
+        double cellR = Math.max(1.5, 2.5 * s);
 
         for (int row = 0; row < 9; row++) {
             for (int col = 0; col < 9; col++) {
                 int index = row * 9 + col;
-                int legend = REGIONS[index][1];
-                int color = (alpha << 24) | COLORS[Math.min(legend, COLORS.length - 1)];
+                int zone = REGIONS[index][1];
+                int baseRgb = COLORS[Math.min(zone, COLORS.length - 1)];
+                boolean isCurrent = (col == cellX && row == cellZ);
 
-                int cx = x + pad + col * cs;
-                int cy = y + pad + row * cs;
-                ctx.fill(cx + 1, cy + 1, cx + cs - 1, cy + cs - 1, color);
+                double cx = gx + col * cs + gap * 0.5;
+                double cy = gy + row * cs + gap * 0.5;
+                double cw = cs - gap;
+                double ch = cs - gap;
 
-                if (showNumbers.get()) {
-                    String label = Integer.toString(REGIONS[index][0]);
-                    ctx.drawText(mc.textRenderer, label, cx + 1, cy + 1, 0xFF000000, false);
-                }
+                int a = isCurrent ? Math.min(255, fillAlpha + 45) : fillAlpha;
+                int topCol = Draw2D.argb(a, Draw2D.shade(baseRgb, isCurrent ? 0.28 : 0.12));
+                int botCol = Draw2D.argb(a, Draw2D.shade(baseRgb, isCurrent ? -0.05 : -0.22));
+                Draw2D.roundRect(cx, cy, cw, ch, cellR, topCol, botCol);
+
+                // Top glossy highlight inside cell
+                Draw2D.rect(cx + cellR * 0.6, cy + 0.5 * s, cw - cellR * 1.2, Math.max(1.0, 0.9 * s),
+                    Draw2D.argb(isCurrent ? 120 : 55, 0xFFFFFF));
             }
         }
 
-        if (cellX >= 0 && cellX < 9 && cellZ >= 0 && cellZ < 9) {
-            int cx = x + pad + cellX * cs;
-            int cy = y + pad + cellZ * cs;
-            ctx.fill(cx, cy, cx + cs, cy + 2, 0xFFFFFFFF);
-            ctx.fill(cx, cy + cs - 2, cx + cs, cy + cs, 0xFFFFFFFF);
-            ctx.fill(cx, cy, cx + 2, cy + cs, 0xFFFFFFFF);
-            ctx.fill(cx + cs - 2, cy, cx + cs, cy + cs, 0xFFFFFFFF);
+        // Active cell highlight + player radar marker
+        if (inBounds) {
+            double cx = gx + cellX * cs;
+            double cy = gy + cellZ * cs;
+            double pulse = 0.5 + 0.5 * Math.sin(time * 4.5);
+            int glowA = (int) (170 + 85 * pulse);
+            double bw = Math.max(1.2, 1.6 * s);
+
+            // Outer glowing frame around current cell
+            int frameCol = Draw2D.argb(glowA, 0xFFFFFF);
+            Draw2D.rect(cx, cy, cs, bw, frameCol);
+            Draw2D.rect(cx, cy + cs - bw, cs, bw, frameCol);
+            Draw2D.rect(cx, cy, bw, cs, frameCol);
+            Draw2D.rect(cx + cs - bw, cy, bw, cs, frameCol);
 
             double fx = fraction(mc.player.getX());
             double fz = fraction(mc.player.getZ());
-            int px = (int) (cx + fx * cs);
-            int pz = (int) (cy + fz * cs);
-            ctx.fill(px - 2, pz - 2, px + 2, pz + 2, 0xFFFFFFFF);
+            double px = cx + fx * cs;
+            double pz = cy + fz * cs;
 
+            // Crosshair lines inside the active cell
+            int crossCol = Draw2D.argb(70, 0xFFFFFF);
+            Draw2D.rect(cx + 1, pz - 0.4 * s, cs - 2, 0.8 * s, crossCol);
+            Draw2D.rect(px - 0.4 * s, cy + 1, 0.8 * s, cs - 2, crossCol);
+
+            // Directional FOV cone + player arrow
             double yaw = Math.toRadians(mc.player.getYaw());
-            int dx = (int) Math.round(-Math.sin(yaw) * 4);
-            int dz = (int) Math.round(Math.cos(yaw) * 4);
-            ctx.fill(px + dx - 1, pz + dz - 1, px + dx + 1, pz + dz + 1, 0xFF9CC8FF);
+            double dirX = -Math.sin(yaw);
+            double dirZ = Math.cos(yaw);
+            double perpX = -dirZ;
+            double perpZ = dirX;
+
+            double coneLen = 6.5 * s;
+            double coneHalf = 3.6 * s;
+            setC(c1, accent, 85);
+            Renderer2D.COLOR.triangle(
+                px, pz,
+                px + dirX * coneLen + perpX * coneHalf, pz + dirZ * coneLen + perpZ * coneHalf,
+                px + dirX * coneLen - perpX * coneHalf, pz + dirZ * coneLen - perpZ * coneHalf,
+                c1
+            );
+
+            // Crisp white directional pointer arrow with dark outline
+            double tip = 3.8 * s;
+            double back = 2.6 * s;
+            double wing = 2.4 * s;
+            setC(c1, 0x050A14, 230);
+            Renderer2D.COLOR.triangle(
+                px + dirX * (tip + 0.8 * s), pz + dirZ * (tip + 0.8 * s),
+                px - dirX * (back + 0.8 * s) + perpX * (wing + 0.8 * s), pz - dirZ * (back + 0.8 * s) + perpZ * (wing + 0.8 * s),
+                px - dirX * (back + 0.8 * s) - perpX * (wing + 0.8 * s), pz - dirZ * (back + 0.8 * s) - perpZ * (wing + 0.8 * s),
+                c1
+            );
+            setC(c1, 0xFFFFFF, 255);
+            Renderer2D.COLOR.triangle(
+                px + dirX * tip, pz + dirZ * tip,
+                px - dirX * back + perpX * wing, pz - dirZ * back + perpZ * wing,
+                px - dirX * back - perpX * wing, pz - dirZ * back - perpZ * wing,
+                c1
+            );
         }
 
+        // Legend color badges
+        double footerY = gy + grid + 4 * s;
         if (showLegend.get()) {
-            int lx = x + pad;
-            int ly = y + pad + grid + 3;
+            double slotW = grid / LEGEND.length;
+            double badgeS = 4.5 * s;
             for (int i = 0; i < LEGEND.length; i++) {
-                int lcx = lx + i * (panelW - pad * 2) / LEGEND.length;
-                ctx.fill(lcx, ly, lcx + 5, ly + 5, 0xFF000000 | COLORS[i]);
-                ctx.drawText(mc.textRenderer, LEGEND[i], lcx + 7, ly - 1, 0xFFDDDDDD, false);
+                double lx = gx + i * slotW;
+                int col = Draw2D.argb(245, COLORS[i]);
+                Draw2D.roundRect(lx, footerY + 1.5 * s, badgeS, badgeS, 1.5 * s, col, Draw2D.argb(245, Draw2D.shade(COLORS[i], -0.2)));
             }
         }
+        Renderer2D.COLOR.render();
 
-        if (showCoordinates.get()) {
-            String text = (int) mc.player.getX() + ", " + (int) mc.player.getZ();
-            ctx.drawText(mc.textRenderer, text, x + pad, y + pad + grid + 14, 0xFF9CC8FF, false);
+        // ---- 2. Text pass
+        // Header title + active region badge
+        tr.begin(s * 0.76, false, true);
+        setColor(Draw2D.shade(accent, 0.38), 255);
+        tr.render("REGION MAP", x + pad + 9 * s, y + pad, tmp, true);
+
+        String badge = inBounds ? ("#" + activeId + " \u00B7 " + LEGEND[activeZone]) : "OUTSIDE";
+        setColor(0xEAF6FF, 255);
+        tr.render(badge, x + panelW - pad - tr.getWidth(badge, true), y + pad, tmp, true);
+        tr.end();
+
+        // Cell region IDs
+        if (showNumbers.get()) {
+            double numScale = Math.max(0.42, (cellSize.get() / 28.0) * s);
+            tr.begin(numScale, false, true);
+            double th = tr.getHeight(false);
+            for (int row = 0; row < 9; row++) {
+                for (int col = 0; col < 9; col++) {
+                    int index = row * 9 + col;
+                    String label = Integer.toString(REGIONS[index][0]);
+                    boolean isCurrent = (col == cellX && row == cellZ);
+                    double tw = tr.getWidth(label, false);
+                    double tx = gx + col * cs + (cs - tw) * 0.5;
+                    double ty = gy + row * cs + (cs - th) * 0.5;
+                    setColor(isCurrent ? 0xFFFFFF : 0x0A101A, isCurrent ? 255 : 210);
+                    tr.render(label, tx, ty, tmp, isCurrent);
+                }
+            }
+            tr.end();
         }
+
+        // Legend labels
+        if (showLegend.get()) {
+            tr.begin(s * 0.62, false, true);
+            double slotW = grid / LEGEND.length;
+            double badgeS = 4.5 * s;
+            for (int i = 0; i < LEGEND.length; i++) {
+                double lx = gx + i * slotW + badgeS + 2.2 * s;
+                setColor(i == activeZone ? 0xFFFFFF : 0xC8DDF2, 255);
+                tr.render(LEGEND[i], lx, footerY + 0.5 * s, tmp, true);
+            }
+            tr.end();
+            footerY += legendH - 2 * s;
+        }
+
+        // Coordinates & border distance footer
+        if (showCoordinates.get()) {
+            tr.begin(s * 0.68, false, true);
+            int px = (int) Math.round(mc.player.getX());
+            int pz = (int) Math.round(mc.player.getZ());
+            String coordStr = String.format(Locale.ROOT, "X %d  Z %d", px, pz);
+            setColor(0xCFE8FF, 255);
+            tr.render(coordStr, gx, footerY + 1 * s, tmp, true);
+
+            if (inBounds) {
+                double fx = fraction(mc.player.getX());
+                double fz = fraction(mc.player.getZ());
+                double distBlocks = Math.min(Math.min(fx, 1.0 - fx), Math.min(fz, 1.0 - fz)) * 50000.0;
+                String borderStr = String.format(Locale.ROOT, "%.1fk to border", distBlocks / 1000.0);
+                setColor(0x88B4E0, 255);
+                tr.render(borderStr, x + panelW - pad - tr.getWidth(borderStr, true), footerY + 1 * s, tmp, true);
+            }
+            tr.end();
+        }
+    }
+
+    private void setColor(int rgb, int a) {
+        tmp.r = (rgb >> 16) & 0xFF;
+        tmp.g = (rgb >> 8) & 0xFF;
+        tmp.b = rgb & 0xFF;
+        tmp.a = a;
+    }
+
+    private static void setC(Color c, int rgb, int a) {
+        c.r = (rgb >> 16) & 0xFF;
+        c.g = (rgb >> 8) & 0xFF;
+        c.b = rgb & 0xFF;
+        c.a = a;
     }
 
     private static int cell(double coord) {

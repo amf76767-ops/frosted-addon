@@ -80,9 +80,9 @@ public class CustomCrosshair extends Module {
     private void onRender2D(Render2DEvent event) {
         if (mc.player == null || mc.currentScreen != null) return;
 
-        double sw = event.screenWidth > 0 ? event.screenWidth : mc.getWindow().getFramebufferWidth();
-        double sh = event.screenHeight > 0 ? event.screenHeight : mc.getWindow().getFramebufferHeight();
-        double guiScale = Math.max(1.0, sh / Math.max(1.0, mc.getWindow().getScaledHeight()));
+        double sw = Draw2D.screenW();
+        double sh = Draw2D.screenH();
+        double guiScale = Draw2D.guiScale();
 
         double cx = sw * 0.5;
         double cy = sh * 0.5;

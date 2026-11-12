@@ -148,6 +148,73 @@ public final class Draw2D {
         triGrad(cx, cy - w, coreArgb, cx, cy + w, coreArgb, cx + armLen, cy, tipTrans);
     }
 
+    /** Framebuffer width in pixels (the coordinate space of Renderer2D inside Render2DEvent). */
+    public static double screenW() {
+        return net.minecraft.client.MinecraftClient.getInstance().getWindow().getFramebufferWidth();
+    }
+
+    /** Framebuffer height in pixels (the coordinate space of Renderer2D inside Render2DEvent). */
+    public static double screenH() {
+        return net.minecraft.client.MinecraftClient.getInstance().getWindow().getFramebufferHeight();
+    }
+
+    /** Framebuffer pixels per GUI pixel. */
+    public static double guiScale() {
+        var w = net.minecraft.client.MinecraftClient.getInstance().getWindow();
+        return Math.max(1.0, w.getFramebufferHeight() / (double) Math.max(1, w.getScaledHeight()));
+    }
+
+    /** Axis-aligned solid rectangle. */
+    public static void rect(double x, double y, double w, double h, int argb) {
+        polyQuad(x, y, x + w, y, x + w, y + h, x, y + h, argb);
+    }
+
+    /** Axis-aligned rectangle with a vertical gradient. */
+    public static void rectV(double x, double y, double w, double h, int top, int bottom) {
+        polyQuadGrad(x, y, top, x + w, y, top, x + w, y + h, bottom, x, y + h, bottom);
+    }
+
+    /** Axis-aligned rectangle with a horizontal gradient. */
+    public static void rectH(double x, double y, double w, double h, int left, int right) {
+        polyQuadGrad(x, y, left, x + w, y, right, x + w, y + h, right, x, y + h, left);
+    }
+
+    /** Rounded rectangle with a smooth vertical gradient, built as a triangle fan. */
+    public static void roundRect(double x, double y, double w, double h, double r, int top, int bottom) {
+        if (w <= 0 || h <= 0) return;
+        if (((top | bottom) >>> 24) == 0) return;
+        r = Math.max(0, Math.min(r, Math.min(w, h) * 0.5));
+        int seg = r < 2 ? 1 : 6;
+        double cx = x + w * 0.5;
+        double cy = y + h * 0.5;
+        int cc = mixArgb(top, bottom, 0.5);
+
+        double px = 0, py = 0;
+        int pc = 0;
+        boolean first = true;
+        double fx = 0, fy = 0;
+        int fc = 0;
+        // corners: top-right, bottom-right, bottom-left, top-left
+        double[][] centers = {{x + w - r, y + r}, {x + w - r, y + h - r}, {x + r, y + h - r}, {x + r, y + r}};
+        double[] startA = {-Math.PI / 2, 0, Math.PI / 2, Math.PI};
+        for (int c = 0; c < 4; c++) {
+            for (int i = 0; i <= seg; i++) {
+                double a = startA[c] + (Math.PI / 2) * i / seg;
+                double vx = centers[c][0] + Math.cos(a) * r;
+                double vy = centers[c][1] + Math.sin(a) * r;
+                int vc = mixArgb(top, bottom, (vy - y) / h);
+                if (first) {
+                    fx = vx; fy = vy; fc = vc;
+                    first = false;
+                } else {
+                    triGrad(cx, cy, cc, px, py, pc, vx, vy, vc);
+                }
+                px = vx; py = vy; pc = vc;
+            }
+        }
+        triGrad(cx, cy, cc, px, py, pc, fx, fy, fc);
+    }
+
     /**
      * Hardware-accelerated polygon fill via triangle fan on {@link Renderer2D#COLOR}.
      * If {@link Renderer2D#COLOR} is not currently building, starts and renders a batch automatically.

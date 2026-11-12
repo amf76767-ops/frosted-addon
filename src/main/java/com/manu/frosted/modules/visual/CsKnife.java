@@ -339,9 +339,9 @@ public class CsKnife extends Module {
 
         updateAnimationState(now);
 
-        double screenW = event.screenWidth > 0 ? event.screenWidth : mc.getWindow().getFramebufferWidth();
-        double screenH = event.screenHeight > 0 ? event.screenHeight : mc.getWindow().getFramebufferHeight();
-        double guiScale = Math.max(1.0, screenH / Math.max(1.0, mc.getWindow().getScaledHeight()));
+        double screenW = Draw2D.screenW();
+        double screenH = Draw2D.screenH();
+        double guiScale = Draw2D.guiScale();
         double k = (screenH / 360.0) * scale.get();
 
         double shiftX = animShiftXNorm * k;
