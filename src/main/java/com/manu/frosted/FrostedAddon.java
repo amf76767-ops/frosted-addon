@@ -4,6 +4,7 @@ import com.manu.frosted.modules.basehunt.ChunkFinder;
 import com.manu.frosted.modules.basehunt.DeepPlayerFinder;
 import com.manu.frosted.modules.basehunt.GhostEsp;
 import com.manu.frosted.modules.basehunt.LightDebug;
+import com.manu.frosted.modules.basehunt.SoundFinder;
 import com.manu.frosted.modules.basehunt.SusChunks;
 import com.manu.frosted.modules.camera.FrostedFreecam;
 import com.manu.frosted.modules.camera.FrostedFreelook;
@@ -49,6 +50,7 @@ public class FrostedAddon extends MeteorAddon {
         modules.add(new SusChunks());
         modules.add(new ChunkFinder());
         modules.add(new DeepPlayerFinder());
+        modules.add(new SoundFinder());
         modules.add(new LightDebug());
         modules.add(new GhostEsp());
 

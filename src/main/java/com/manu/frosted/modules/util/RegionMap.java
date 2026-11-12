@@ -56,20 +56,20 @@ public class RegionMap extends Module {
     );
 
     private final Setting<Double> scale = sgGeneral.add(new DoubleSetting.Builder()
-        .name("scale")
+        .name("map-scale")
         .description("Overall scale of the region map.")
-        .defaultValue(1.0)
+        .defaultValue(1.35)
         .min(0.6)
-        .sliderRange(0.6, 2.2)
+        .sliderRange(0.6, 3.0)
         .build()
     );
 
     private final Setting<Integer> cellSize = sgGeneral.add(new IntSetting.Builder()
-        .name("cell-size")
+        .name("grid-cell-size")
         .description("Base pixels per region cell.")
-        .defaultValue(18)
-        .min(10)
-        .sliderRange(10, 32)
+        .defaultValue(26)
+        .min(14)
+        .sliderRange(14, 48)
         .build()
     );
 

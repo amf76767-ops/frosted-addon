@@ -1,6 +1,7 @@
 package com.manu.frosted.modules.basehunt;
 
 import com.manu.frosted.FrostedAddon;
+import com.manu.frosted.util.FrostedChunkRenderer;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import it.unimi.dsi.fastutil.longs.LongSet;
 import meteordevelopment.meteorclient.events.render.Render3DEvent;
@@ -164,7 +165,7 @@ public class ChunkFinder extends Module {
     private final Queue<Long> scanQueue = new ConcurrentLinkedQueue<>();
 
     public ChunkFinder() {
-        super(FrostedAddon.BASEHUNT, "chunk-finder-v2", "Flags chunks with construction evidence: misplaced stone, end stone, stripped geodes, farms.");
+        super(FrostedAddon.BASEHUNT, "chunk-finder", "Flags chunks with construction evidence: misplaced stone, end stone, stripped geodes, farms.");
     }
 
     @Override
@@ -371,9 +372,10 @@ public class ChunkFinder extends Module {
 
     @EventHandler
     private void onRender(Render3DEvent event) {
-        if (mc.player == null || mc.world == null) return;
+        if (mc.player == null || mc.world == null || results.isEmpty()) return;
 
         int y = renderY.get();
+        double time = (System.currentTimeMillis() % 1_000_000L) / 1000.0;
         for (Map.Entry<Long, Result> entry : results.entrySet()) {
             long key = entry.getKey();
             double x = ChunkPos.getPackedX(key) << 4;
@@ -381,7 +383,7 @@ public class ChunkFinder extends Module {
             Result result = entry.getValue();
 
             Color color = colorFor(result.flags);
-            event.renderer.box(x, y, z, x + 16, y + 0.4, z + 16, color, color, shapeMode.get(), 0);
+            FrostedChunkRenderer.drawChunk(event.renderer, x, y, z, color, 105, time, result.score >= threshold() * 2);
         }
     }
 

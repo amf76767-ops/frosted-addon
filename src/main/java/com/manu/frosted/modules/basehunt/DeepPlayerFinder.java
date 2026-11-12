@@ -1,13 +1,17 @@
 package com.manu.frosted.modules.basehunt;
 
 import com.manu.frosted.FrostedAddon;
+import com.manu.frosted.util.FrostedChunkRenderer;
 import meteordevelopment.meteorclient.events.packets.PacketEvent;
+import meteordevelopment.meteorclient.events.render.Render3DEvent;
 import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.settings.BoolSetting;
+import meteordevelopment.meteorclient.settings.ColorSetting;
 import meteordevelopment.meteorclient.settings.IntSetting;
 import meteordevelopment.meteorclient.settings.Setting;
 import meteordevelopment.meteorclient.settings.SettingGroup;
 import meteordevelopment.meteorclient.systems.modules.Module;
+import meteordevelopment.meteorclient.utils.render.color.SettingColor;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.network.packet.s2c.play.LightData;
 import net.minecraft.network.packet.s2c.play.LightUpdateS2CPacket;
@@ -21,17 +25,17 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
 
 /**
- * Detects underground player activity from light packets.
+ * Detects underground player activity from light packets and renders
+ * the flagged chunks with the 3D Frosted Chunk & Crystal look.
  *
  * When a section below the surface arrives with an initialised block-light
  * array that is entirely zero, something has carved out space there. Natural
  * terrain below ground is either not sent or carries light; a fresh all-zero
  * section means a tunnel, a room or a mine.
- *
- * This is packet observation only. Nothing is sent, no movement is touched.
  */
 public class DeepPlayerFinder extends Module {
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
+    private final SettingGroup sgRender = settings.createGroup("Render");
 
     private final Setting<Integer> scanRadius = sgGeneral.add(new IntSetting.Builder()
         .name("scan-radius")
@@ -61,6 +65,37 @@ public class DeepPlayerFinder extends Module {
     private final Setting<Boolean> sound = sgGeneral.add(new BoolSetting.Builder()
         .name("sound")
         .defaultValue(false)
+        .build()
+    );
+
+    private final Setting<Integer> renderY = sgRender.add(new IntSetting.Builder()
+        .name("render-y")
+        .description("Height of the frosted chunk markers.")
+        .defaultValue(60)
+        .sliderRange(-64, 320)
+        .build()
+    );
+
+    private final Setting<Integer> opacity = sgRender.add(new IntSetting.Builder()
+        .name("opacity")
+        .description("Frosted fill opacity, 0-255.")
+        .defaultValue(105)
+        .min(20)
+        .sliderRange(20, 255)
+        .build()
+    );
+
+    private final Setting<Boolean> showCrystal = sgRender.add(new BoolSetting.Builder()
+        .name("center-crystal")
+        .description("Draw a floating 3D frost crystal in the center of each flagged chunk.")
+        .defaultValue(true)
+        .build()
+    );
+
+    private final Setting<SettingColor> color = sgRender.add(new ColorSetting.Builder()
+        .name("color")
+        .description("Frosted highlight color for underground activity chunks.")
+        .defaultValue(new SettingColor(95, 210, 255, 220))
         .build()
     );
 
@@ -144,6 +179,23 @@ public class DeepPlayerFinder extends Module {
             if (sound.get() && mc.player != null) {
                 mc.player.playSound(net.minecraft.sound.SoundEvents.ENTITY_EXPERIENCE_ORB_PICKUP, 0.8f, 0.7f);
             }
+        }
+    }
+
+    @EventHandler
+    private void onRender(Render3DEvent event) {
+        if (mc.player == null || mc.world == null || flagged.isEmpty()) return;
+
+        int y = renderY.get();
+        int fillA = opacity.get();
+        boolean crystal = showCrystal.get();
+        SettingColor col = color.get();
+        double time = (System.currentTimeMillis() % 1_000_000L) / 1000.0;
+
+        for (Long key : flagged) {
+            double x = ChunkPos.getPackedX(key) << 4;
+            double z = ChunkPos.getPackedZ(key) << 4;
+            FrostedChunkRenderer.drawChunk(event.renderer, x, y, z, col, fillA, time, crystal);
         }
     }
 }

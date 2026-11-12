@@ -157,7 +157,11 @@ public class FrostedAmbience extends Module {
         ticks++;
 
         Theme t = theme.get();
-        if (skyPreset.get() && appliedTheme != t) applySky();
+        if (skyPreset.get()) {
+            if (appliedTheme != t || ambience == null || !ambience.isActive()) applySky();
+        } else if (appliedTheme != null) {
+            restoreSky();
+        }
 
         boolean skyVisible = mc.world.isSkyVisible(mc.player.getBlockPos());
         skyFade += ((skyVisible ? 1.0 : 0.0) - skyFade) * 0.06;

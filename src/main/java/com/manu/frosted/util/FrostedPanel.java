@@ -56,17 +56,9 @@ public final class FrostedPanel {
         }
 
         if (snow) {
-            int snowC = Draw2D.argb(240, 0xF6FBFF);
-            double start = x + Math.max(r, 3 * s);
-            double end = x + w - Math.max(r, 3 * s);
-            int idx = 0;
-            for (double sx = start; sx < end; sx += 3.5 * s, idx++) {
-                int hsh = (idx * 37 + 11) & 7;
-                double cw = Math.min((2.5 + (hsh & 1)) * s, end - sx);
-                double ch = (1 + (hsh >> 1) % 3) * s * 0.8;
-                if (cw <= 0) continue;
-                Draw2D.roundRect(sx, y - ch * 0.35, cw, ch, ch * 0.5, snowC, snowC);
-            }
+            // Crisp icy top rim instead of lumpy snow blocks
+            Draw2D.rectH(x + r, y, Math.max(0, w - r * 2), Math.max(1.0, 1.2 * s),
+                Draw2D.argb(190, 0xE2F6FF), Draw2D.argb(90, accRgb));
         }
     }
 

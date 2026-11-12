@@ -1,6 +1,7 @@
 package com.manu.frosted.modules.basehunt;
 
 import com.manu.frosted.FrostedAddon;
+import com.manu.frosted.util.FrostedChunkRenderer;
 import it.unimi.dsi.fastutil.longs.Long2ObjectMap;
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
@@ -488,23 +489,21 @@ public class SusChunks extends Module {
 
     @EventHandler
     private void onRender(Render3DEvent event) {
-        if (mc.player == null || mc.world == null) return;
+        if (mc.player == null || mc.world == null || flagged.isEmpty()) return;
 
         int y = renderY.get();
         int alpha = opacity.get();
+        double time = (System.currentTimeMillis() % 1_000_000L) / 1000.0;
+        SettingColor col = lineColor.get();
 
         for (Long key : flagged) {
             double x = ChunkPos.getPackedX(key) << 4;
             double z = ChunkPos.getPackedZ(key) << 4;
-
-            event.renderer.quadHorizontal(x, y, z, x + 16, z + 16,
-                new meteordevelopment.meteorclient.utils.render.color.Color(255, 60, 200, alpha));
-            event.renderer.quadHorizontal(x, y + 0.01, z, x + 16, z + 16,
-                new meteordevelopment.meteorclient.utils.render.color.Color(255, 60, 200, 20));
+            FrostedChunkRenderer.drawChunk(event.renderer, x, y, z, col, alpha, time, false);
         }
 
         for (Zone zone : zones) {
-            event.renderer.line(zone.centerX, y, zone.centerZ, zone.centerX, y + 8, zone.centerZ, lineColor.get());
+            FrostedChunkRenderer.drawBeacon(event.renderer, zone.centerX, y, zone.centerZ, col, time, 11.0);
         }
     }
 
