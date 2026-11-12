@@ -286,7 +286,7 @@ public class FrostedHud extends Module {
         if (v == null || v.isEmpty()) return null;
         Content c = new Content(null);
         c.big = v;
-        c.rows.add(new Row(mc.getCurrentFps() + " fps", 0x9CC8FF, "1.4.0", 0x6F8FB8));
+        c.rows.add(new Row(mc.getCurrentFps() + " fps", 0x9CC8FF, "1.6.0", 0x6F8FB8));
         return c;
     }
 

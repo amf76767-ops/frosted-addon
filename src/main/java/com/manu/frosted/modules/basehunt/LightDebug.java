@@ -43,6 +43,14 @@ public class LightDebug extends Module {
         .build()
     );
 
+    private final Setting<Integer> maxY = sgGeneral.add(new IntSetting.Builder()
+        .name("max-y")
+        .description("Only show lit blocks strictly below this Y level (0 = only below Y 0).")
+        .defaultValue(0)
+        .sliderRange(-64, 64)
+        .build()
+    );
+
     private final Setting<Integer> minLight = sgGeneral.add(new IntSetting.Builder()
         .name("min-light")
         .description("Mark blocks with block light at or above this level.")
@@ -113,13 +121,16 @@ public class LightDebug extends Module {
         boxes.clear();
 
         int r = radius.get();
+        int yLimit = maxY.get();
         int threshold = minLight.get();
         BlockPos center = mc.player.getBlockPos();
 
         Map<Integer, Set<Long>> byLayer = new HashMap<>();
 
-        for (int dx = -r; dx <= r; dx++) {
-            for (int dy = -r; dy <= r; dy++) {
+        for (int dy = -r; dy <= r; dy++) {
+            int wy = center.getY() + dy;
+            if (wy >= yLimit) continue;
+            for (int dx = -r; dx <= r; dx++) {
                 for (int dz = -r; dz <= r; dz++) {
                     BlockPos pos = center.add(dx, dy, dz);
                     if (!mc.world.isChunkLoaded(pos.getX() >> 4, pos.getZ() >> 4)) continue;
