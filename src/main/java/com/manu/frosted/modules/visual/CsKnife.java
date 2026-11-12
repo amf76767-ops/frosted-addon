@@ -19,13 +19,16 @@ import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.meteorclient.utils.render.color.SettingColor;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.client.gui.DrawContext;
+import net.minecraft.client.util.math.MatrixStack;
 import net.minecraft.item.ItemStack;
+import net.minecraft.util.Arm;
+import net.minecraft.util.math.RotationAxis;
 
 /**
- * Cosmetic CS-style knife overlay rendered at full screen resolution via {@link Renderer2D#COLOR}.
+ * 3D volumetric CS-style knife with synchronized first-person Minecraft arm animations.
  *
- * Animations: smooth idle sway with camera-turn inertia, slash with an icy trail when you attack,
- * inspect on right click and spin on the swap-hands key (F by default).
+ * Both the 3D knife and the player's first-person MC arm sway, slash on attack,
+ * lift & twist on right-click inspect, and toss/spin in 3D when pressing the swap-hands key (F).
  */
 public class CsKnife extends Module {
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
@@ -57,7 +60,7 @@ public class CsKnife extends Module {
 
     private final Setting<Boolean> showArm = sgGeneral.add(new BoolSetting.Builder()
         .name("show-arm")
-        .description("Keep your own arm visible and only swap the sword for the knife. Turn off to hide the whole hand.")
+        .description("Keep your own arm visible and animate it along with the knife. Turn off to hide the whole hand.")
         .defaultValue(true).build()
     );
 
@@ -87,7 +90,7 @@ public class CsKnife extends Module {
     );
 
     private final Setting<Boolean> slash = sgMotion.add(new BoolSetting.Builder()
-        .name("slash-on-attack").description("Swing the knife when you press attack.").defaultValue(true).build()
+        .name("slash-on-attack").description("Swing the knife and arm when you press attack.").defaultValue(true).build()
     );
 
     private final Setting<Boolean> inspect = sgMotion.add(new BoolSetting.Builder()
@@ -96,7 +99,7 @@ public class CsKnife extends Module {
 
     private final Setting<Boolean> spinOnSwapKey = sgMotion.add(new BoolSetting.Builder()
         .name("spin-on-swap-key")
-        .description("Spin the knife when you press the swap-hands key (F). The item is not swapped into the offhand.")
+        .description("Spin the knife and arm when you press the swap-hands key (F). The item is not swapped into the offhand.")
         .defaultValue(true).build()
     );
 
@@ -124,8 +127,19 @@ public class CsKnife extends Module {
     private double turnX;
     private double turnY;
 
+    // Live animation state shared between the 3D arm renderer and the 3D knife renderer
+    private double animShiftXNorm;
+    private double animShiftYNorm;
+    private double animTiltDeg;
+    private double animSpinDeg;
+    private double animRollRad;
+    private double animPitchRad;
+    private double animSlashWave;
+    private double animInspectWave;
+    private double animSpinWave;
+
     public CsKnife() {
-        super(FrostedAddon.VISUAL, "cs-knife", "Cosmetic CS-style knife with slash, inspect and spin animations.");
+        super(FrostedAddon.VISUAL, "cs-knife", "3D CS-style knife with synchronized MC arm slash, inspect and spin animations.");
     }
 
     @Override
@@ -174,6 +188,146 @@ public class CsKnife extends Module {
         lastAttack = attack;
     }
 
+    /** Updates the shared 3D animation state for the current frame. */
+    private void updateAnimationState(long now) {
+        long nowNs = System.nanoTime();
+        double dt = Math.min(0.1, Math.max(0.0, (nowNs - lastFrameNs) / 1_000_000_000.0));
+        if (dt > 0.0005) {
+            lastFrameNs = nowNs;
+            if (sway.get() && mc.player != null) {
+                var vel = mc.player.getVelocity();
+                double rawSpeed = Math.min(0.32, Math.hypot(vel.x, vel.z));
+                double alpha = 1.0 - Math.exp(-dt * 12.0);
+                smoothSpeed += (rawSpeed - smoothSpeed) * alpha;
+                walkPhase += dt * (2.2 + smoothSpeed * 18.0);
+
+                float yaw = mc.player.getYaw();
+                float pitch = mc.player.getPitch();
+                double dYaw = ((yaw - prevYaw + 540.0) % 360.0) - 180.0;
+                double dPitch = pitch - prevPitch;
+                prevYaw = yaw;
+                prevPitch = pitch;
+
+                turnX = Math.max(-22.0, Math.min(22.0, turnX - dYaw * 0.42));
+                turnY = Math.max(-16.0, Math.min(16.0, turnY - dPitch * 0.35));
+                double decay = Math.exp(-dt * 10.0);
+                turnX *= decay;
+                turnY *= decay;
+            }
+        }
+
+        double shiftX = 0;
+        double shiftY = 0;
+        double tiltAdd = 0;
+        // Base 3D perspective angle so the spine and 3D bevels are always visible
+        double rollRad = 0.36;
+        double pitchRad = 0.16;
+        double spinDeg = 0;
+
+        if (sway.get()) {
+            shiftY += Math.sin(walkPhase) * (0.9 + smoothSpeed * 15.0) + turnY;
+            shiftX += Math.cos(walkPhase * 0.5) * (0.6 + smoothSpeed * 9.0) + turnX;
+            tiltAdd += Math.sin(walkPhase * 0.5) * (0.7 + smoothSpeed * 6.5) + turnX * 0.35;
+            rollRad += Math.sin(walkPhase * 0.5) * 0.08 + turnY * 0.015;
+            pitchRad += Math.cos(walkPhase) * 0.05 - turnX * 0.012;
+        }
+
+        double inspectWave = 0;
+        if (inspectStart > 0) {
+            double p = (now - inspectStart) / 1250.0;
+            if (p >= 1.0) {
+                inspectStart = -1;
+            } else {
+                inspectWave = Math.sin(p * Math.PI);
+                tiltAdd += inspectWave * 40.0;
+                shiftY -= inspectWave * 22.0;
+                shiftX -= inspectWave * 12.0;
+                // Full 360-degree 3D roll so both sides + spine of the blade revolve in 3D
+                rollRad += p * Math.PI * 2.0;
+                pitchRad += Math.sin(p * Math.PI * 2.0) * 0.32;
+            }
+        }
+
+        double slashWave = 0;
+        if (slashStart > 0) {
+            double p = (now - slashStart) / 260.0;
+            if (p >= 1.0) {
+                slashStart = -1;
+            } else {
+                slashWave = Math.sin(Math.pow(p, 0.72) * Math.PI);
+                tiltAdd += slashWave * 30.0;
+                shiftX -= slashWave * 34.0;
+                shiftY += slashWave * 14.0;
+                rollRad += slashWave * 0.55;
+                pitchRad -= slashWave * 0.38;
+            }
+        }
+
+        double spinWave = 0;
+        if (spinStart > 0) {
+            double p = (now - spinStart) / (double) spinTime.get();
+            if (p >= 1.0) {
+                spinStart = -1;
+            } else {
+                double eased = p * p * (3.0 - 2.0 * p);
+                int turns = spinTurns.get();
+                spinWave = Math.sin(p * Math.PI);
+                spinDeg = 360.0 * turns * eased;
+                rollRad += eased * Math.PI * 2.0;
+                pitchRad += Math.sin(eased * Math.PI * 2.0 * turns) * 0.35;
+                shiftY -= spinWave * 34.0;
+            }
+        }
+
+        animShiftXNorm = shiftX;
+        animShiftYNorm = shiftY;
+        animTiltDeg = tiltAdd;
+        animSpinDeg = spinDeg;
+        animRollRad = rollRad;
+        animPitchRad = pitchRad;
+        animSlashWave = slashWave;
+        animInspectWave = inspectWave;
+        animSpinWave = spinWave;
+    }
+
+    /**
+     * Transforms the first-person 3D Minecraft arm in camera space so it holds the knife
+     * and moves with idle sway, slash, inspect, and spin!
+     */
+    public void applyArmTransform(MatrixStack matrices, Arm arm) {
+        updateAnimationState(System.currentTimeMillis());
+
+        float side = (arm == Arm.RIGHT) ? 1.0f : -1.0f;
+
+        // Convert GUI-unit shifts into 3D camera-space offsets
+        float ox = (float) ((offsetX.get() * 0.0035 + animShiftXNorm * 0.0045) * side);
+        float oy = (float) (-offsetY.get() * 0.0035 - animShiftYNorm * 0.0045);
+        float oz = (float) (-animSlashWave * 0.22 - animInspectWave * 0.14 - animSpinWave * 0.16);
+
+        // Move arm slightly up and inward so the hand grips the 3D knife handle
+        matrices.translate(side * -0.08f + ox, 0.14f + oy, -0.06f + oz);
+
+        // Pivot around the forearm/wrist in camera space
+        float pivX = side * 0.52f;
+        float pivY = -0.46f;
+        float pivZ = -0.68f;
+        matrices.translate(pivX, pivY, pivZ);
+
+        // 1. In-plane spin & tilt (matches the knife's spinDeg and tiltAdd!)
+        float zRot = (float) (side * (animTiltDeg * 0.75 + animSpinDeg));
+        matrices.multiply(RotationAxis.POSITIVE_Z.rotationDegrees(zRot));
+
+        // 2. 3D wrist roll & inspect twist
+        float yRot = (float) (side * ((animRollRad - 0.36) * 42.0 - animSlashWave * 28.0));
+        matrices.multiply(RotationAxis.POSITIVE_Y.rotationDegrees(yRot));
+
+        // 3. 3D pitch lunge on slash / lift on inspect & spin
+        float xRot = (float) (animInspectWave * 26.0 - animSlashWave * 34.0 + Math.sin(Math.toRadians(animSpinDeg)) * 22.0);
+        matrices.multiply(RotationAxis.POSITIVE_X.rotationDegrees(xRot));
+
+        matrices.translate(-pivX, -pivY, -pivZ);
+    }
+
     @EventHandler
     private void onRender2D(Render2DEvent event) {
         if (mc.player == null || mc.currentScreen != null) return;
@@ -183,98 +337,17 @@ public class CsKnife extends Module {
         long now = System.currentTimeMillis();
         double time = (now % 1_000_000L) / 1000.0;
 
-        long nowNs = System.nanoTime();
-        double dt = Math.min(0.1, Math.max(0.001, (nowNs - lastFrameNs) / 1_000_000_000.0));
-        lastFrameNs = nowNs;
+        updateAnimationState(now);
 
-        // Render in native screen pixels so the knife is crisp at every resolution.
         double screenW = event.screenWidth > 0 ? event.screenWidth : mc.getWindow().getFramebufferWidth();
         double screenH = event.screenHeight > 0 ? event.screenHeight : mc.getWindow().getFramebufferHeight();
         double guiScale = Math.max(1.0, screenH / Math.max(1.0, mc.getWindow().getScaledHeight()));
         double k = (screenH / 360.0) * scale.get();
 
-        double tiltAdd = 0;
-        double shiftX = 0;
-        double shiftY = 0;
-        double roll = 1.0;
-        double spinDeg = 0;
-        double handleFlip = 0;
-        double glint = 0;
-
-        if (sway.get()) {
-            var vel = mc.player.getVelocity();
-            double rawSpeed = Math.min(0.32, Math.hypot(vel.x, vel.z));
-            double alpha = 1.0 - Math.exp(-dt * 12.0);
-            smoothSpeed += (rawSpeed - smoothSpeed) * alpha;
-            walkPhase += dt * (2.2 + smoothSpeed * 18.0);
-
-            shiftY += Math.sin(walkPhase) * (0.9 + smoothSpeed * 15.0) * k;
-            shiftX += Math.cos(walkPhase * 0.5) * (0.6 + smoothSpeed * 9.0) * k;
-            tiltAdd += Math.sin(walkPhase * 0.5) * (0.7 + smoothSpeed * 6.5);
-
-            float yaw = mc.player.getYaw();
-            float pitch = mc.player.getPitch();
-            double dYaw = ((yaw - prevYaw + 540.0) % 360.0) - 180.0;
-            double dPitch = pitch - prevPitch;
-            prevYaw = yaw;
-            prevPitch = pitch;
-
-            turnX = Math.max(-22.0, Math.min(22.0, turnX - dYaw * 0.42));
-            turnY = Math.max(-16.0, Math.min(16.0, turnY - dPitch * 0.35));
-            double decay = Math.exp(-dt * 10.0);
-            turnX *= decay;
-            turnY *= decay;
-
-            shiftX += turnX * k;
-            shiftY += turnY * k;
-            tiltAdd += turnX * 0.35;
-        }
-
-        if (inspectStart > 0) {
-            double p = (now - inspectStart) / 1200.0;
-            if (p >= 1.0) {
-                inspectStart = -1;
-            } else {
-                double wave = Math.sin(p * Math.PI);
-                tiltAdd += wave * 42;
-                shiftY -= wave * 20 * k;
-                roll *= Math.cos(p * Math.PI * 2.0);
-                glint = Math.max(glint, 0.75 * wave);
-            }
-        }
-
-        double slashWave = 0;
-        if (slashStart > 0) {
-            double p = (now - slashStart) / 250.0;
-            if (p >= 1.0) {
-                slashStart = -1;
-            } else {
-                // Fast snap-out and smooth recovery
-                slashWave = Math.sin(Math.pow(p, 0.72) * Math.PI);
-                tiltAdd += slashWave * 28;
-                shiftX -= slashWave * 32 * k;
-                shiftY += slashWave * 13 * k;
-                glint = Math.max(glint, 0.65 * slashWave);
-            }
-        }
-
-        if (spinStart > 0) {
-            double p = (now - spinStart) / (double) spinTime.get();
-            if (p >= 1.0) {
-                spinStart = -1;
-            } else {
-                double eased = p * p * (3.0 - 2.0 * p);
-                int turns = spinTurns.get();
-                spinDeg = 360.0 * turns * eased;
-                roll *= Math.cos(eased * Math.PI * 2.0);
-                handleFlip = Math.PI * 2.0 * turns * eased;
-                shiftY -= Math.sin(p * Math.PI) * 36 * k;
-                glint = 1.0;
-            }
-        }
-
-        // keep a sliver visible when the knife passes edge-on
-        if (Math.abs(roll) < 0.12) roll = roll < 0 ? -0.12 : 0.12;
+        double shiftX = animShiftXNorm * k;
+        double shiftY = animShiftYNorm * k;
+        double glint = Math.max(animSlashWave * 0.65, Math.max(animInspectWave * 0.75, animSpinWave > 0 ? 1.0 : 0.0));
+        double handleFlip = Math.toRadians(animSpinDeg);
 
         KnifeStyle knife = style.get();
         KnifeFinish look = finish.get();
@@ -283,24 +356,26 @@ public class CsKnife extends Module {
 
         double baseX = screenW * 0.78 + offsetX.get() * guiScale + shiftX;
         double baseY = screenH * 0.84 + offsetY.get() * guiScale + shiftY;
-        double tilt = knife.tilt + tiltAdd;
+        double tilt = knife.tilt + animTiltDeg;
 
         Renderer2D.COLOR.begin();
 
-        if (slashWave > 0.08) {
-            drawSlashArc(baseX, baseY, knife.bladeLen * k, slashWave, look.accent(), false);
+        if (animSlashWave > 0.08) {
+            drawSlashArc(baseX, baseY, knife.bladeLen * k, animSlashWave, look.accent(), false);
             if (knife.twin()) {
-                drawSlashArc(screenW - baseX, baseY, knife.bladeLen * k, slashWave, look.accent(), true);
+                drawSlashArc(screenW - baseX, baseY, knife.bladeLen * k, animSlashWave, look.accent(), true);
             }
         }
 
         KnifeRenderer.draw(ctx, knife, look, new KnifeRenderer.Pose(
-            baseX, baseY, tilt, spinDeg, roll, k, false, time, glint, handleFlip,
+            baseX, baseY, tilt, animSpinDeg, animRollRad, animPitchRad,
+            k, false, time, glint, handleFlip,
             blade, handle, shadow.get(), sparkles.get()));
 
         if (knife.twin()) {
             KnifeRenderer.draw(ctx, knife, look, new KnifeRenderer.Pose(
-                screenW - baseX, baseY, tilt, spinDeg, roll, k, true, time + 0.4, glint, handleFlip,
+                screenW - baseX, baseY, tilt, animSpinDeg, animRollRad, animPitchRad,
+                k, true, time + 0.4, glint, handleFlip,
                 blade, handle, shadow.get(), sparkles.get()));
         }
 
@@ -338,8 +413,12 @@ public class CsKnife extends Module {
         }
     }
 
-    private boolean showing() {
+    public boolean showing() {
         return mc.player != null && (!holdingOnly.get() || isSword(mc.player.getMainHandStack()));
+    }
+
+    public boolean isTwin() {
+        return style.get().twin();
     }
 
     public boolean hidesHeldItem(ItemStack stack) {
