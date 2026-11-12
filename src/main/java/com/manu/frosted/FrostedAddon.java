@@ -10,13 +10,17 @@ import com.manu.frosted.modules.camera.FrostedFreecam;
 import com.manu.frosted.modules.camera.FrostedFreelook;
 import com.manu.frosted.modules.combat.AutoJumpReset;
 import com.manu.frosted.modules.combat.Autoclicker;
+import com.manu.frosted.modules.combat.Backtrack;
+import com.manu.frosted.modules.combat.FakeLag;
 import com.manu.frosted.modules.combat.KeyPearl;
 import com.manu.frosted.modules.combat.LegitAim;
 import com.manu.frosted.modules.combat.TriggerBot;
 import com.manu.frosted.modules.combat.WTap;
 import com.manu.frosted.modules.hud.FrostedHud;
+import com.manu.frosted.modules.util.BoatNoClip;
 import com.manu.frosted.modules.util.DeathCoords;
 import com.manu.frosted.modules.util.FrostedUpdater;
+import com.manu.frosted.modules.util.NoClip;
 import com.manu.frosted.modules.util.RegionMap;
 import com.manu.frosted.modules.util.StaffList;
 import com.manu.frosted.update.UpdateManager;
@@ -24,6 +28,7 @@ import com.manu.frosted.modules.visual.CsKnife;
 import com.manu.frosted.modules.visual.CustomCrosshair;
 import com.manu.frosted.modules.visual.FrostedAmbience;
 import com.manu.frosted.modules.visual.FrostedEffects;
+import com.manu.frosted.modules.visual.FrostedItems;
 import com.manu.frosted.modules.visual.HitParticles;
 import com.manu.frosted.modules.visual.JumpCircles;
 import meteordevelopment.meteorclient.addons.MeteorAddon;
@@ -61,12 +66,16 @@ public class FrostedAddon extends MeteorAddon {
         modules.add(new TriggerBot());
         modules.add(new Autoclicker());
         modules.add(new LegitAim());
+        modules.add(new Backtrack());
+        modules.add(new FakeLag());
 
         // Camera
         modules.add(new FrostedFreecam());
         modules.add(new FrostedFreelook());
 
         // Util
+        modules.add(new BoatNoClip());
+        modules.add(new NoClip());
         modules.add(new DeathCoords());
         modules.add(new StaffList());
         modules.add(new RegionMap());
@@ -80,6 +89,7 @@ public class FrostedAddon extends MeteorAddon {
         modules.add(new CsKnife());
         modules.add(new FrostedAmbience());
         modules.add(new FrostedEffects());
+        modules.add(new FrostedItems());
 
 
         UpdateManager.init();
