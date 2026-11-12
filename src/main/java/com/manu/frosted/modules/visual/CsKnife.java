@@ -304,13 +304,13 @@ public class CsKnife extends Module {
         float oy = (float) (-offsetY.get() * 0.0035 - animShiftYNorm * 0.0045);
         float oz = (float) (-animSlashWave * 0.22 - animInspectWave * 0.14 - animSpinWave * 0.16);
 
-        // Move arm slightly up and inward so the hand grips the 3D knife handle
-        matrices.translate(side * -0.08f + ox, 0.14f + oy, -0.06f + oz);
+        // Position the 3D arm so the fist sits directly on the 3D knife handle
+        matrices.translate(side * 0.05f + ox, -0.05f + oy, -0.04f + oz);
 
-        // Pivot around the forearm/wrist in camera space
-        float pivX = side * 0.52f;
-        float pivY = -0.46f;
-        float pivZ = -0.68f;
+        // Pivot around the hand/wrist in camera space (matches the knife's handle/ring pivot)
+        float pivX = side * 0.56f;
+        float pivY = -0.52f;
+        float pivZ = -0.72f;
         matrices.translate(pivX, pivY, pivZ);
 
         // 1. In-plane spin & tilt (matches the knife's spinDeg and tiltAdd!)
@@ -354,8 +354,10 @@ public class CsKnife extends Module {
         int blade = rgb(bladeColor.get());
         int handle = rgb(handleColor.get());
 
-        double baseX = screenW * 0.78 + offsetX.get() * guiScale + shiftX;
-        double baseY = screenH * 0.84 + offsetY.get() * guiScale + shiftY;
+        // Guard position at the top-left of the player's fist so the handle lies inside the hand
+        // and the blade extends cleanly out in front of the hand.
+        double baseX = screenW * 0.685 + offsetX.get() * guiScale + shiftX;
+        double baseY = screenH * 0.715 + offsetY.get() * guiScale + shiftY;
         double tilt = knife.tilt + animTiltDeg;
 
         Renderer2D.COLOR.begin();

@@ -301,31 +301,30 @@ public class RegionMap extends Module {
 
             double coneLen = 6.5 * s;
             double coneHalf = 3.6 * s;
-            setC(c1, accent, 85);
-            Renderer2D.COLOR.triangle(
-                px, pz,
-                px + dirX * coneLen + perpX * coneHalf, pz + dirZ * coneLen + perpZ * coneHalf,
-                px + dirX * coneLen - perpX * coneHalf, pz + dirZ * coneLen - perpZ * coneHalf,
-                c1
+            int coneCenter = Draw2D.argb(95, 0xFFFFFF);
+            int coneOuter = Draw2D.argb(0, accent);
+            Draw2D.triGrad(
+                px, pz, coneCenter,
+                px + dirX * coneLen + perpX * coneHalf, pz + dirZ * coneLen + perpZ * coneHalf, coneOuter,
+                px + dirX * coneLen - perpX * coneHalf, pz + dirZ * coneLen - perpZ * coneHalf, coneOuter
             );
 
             // Crisp white directional pointer arrow with dark outline
             double tip = 3.8 * s;
             double back = 2.6 * s;
             double wing = 2.4 * s;
-            setC(c1, 0x050A14, 230);
-            Renderer2D.COLOR.triangle(
-                px + dirX * (tip + 0.8 * s), pz + dirZ * (tip + 0.8 * s),
-                px - dirX * (back + 0.8 * s) + perpX * (wing + 0.8 * s), pz - dirZ * (back + 0.8 * s) + perpZ * (wing + 0.8 * s),
-                px - dirX * (back + 0.8 * s) - perpX * (wing + 0.8 * s), pz - dirZ * (back + 0.8 * s) - perpZ * (wing + 0.8 * s),
-                c1
+            int arrowOut = Draw2D.argb(230, 0x050A14);
+            Draw2D.triGrad(
+                px + dirX * (tip + 0.8 * s), pz + dirZ * (tip + 0.8 * s), arrowOut,
+                px - dirX * (back + 0.8 * s) + perpX * (wing + 0.8 * s), pz - dirZ * (back + 0.8 * s) + perpZ * (wing + 0.8 * s), arrowOut,
+                px - dirX * (back + 0.8 * s) - perpX * (wing + 0.8 * s), pz - dirZ * (back + 0.8 * s) - perpZ * (wing + 0.8 * s), arrowOut
             );
-            setC(c1, 0xFFFFFF, 255);
-            Renderer2D.COLOR.triangle(
-                px + dirX * tip, pz + dirZ * tip,
-                px - dirX * back + perpX * wing, pz - dirZ * back + perpZ * wing,
-                px - dirX * back - perpX * wing, pz - dirZ * back - perpZ * wing,
-                c1
+            int arrowTip = Draw2D.argb(255, 0xFFFFFF);
+            int arrowWing = Draw2D.argb(255, 0xCFEAFF);
+            Draw2D.triGrad(
+                px + dirX * tip, pz + dirZ * tip, arrowTip,
+                px - dirX * back + perpX * wing, pz - dirZ * back + perpZ * wing, arrowWing,
+                px - dirX * back - perpX * wing, pz - dirZ * back - perpZ * wing, arrowWing
             );
         }
 

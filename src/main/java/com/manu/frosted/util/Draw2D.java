@@ -57,6 +57,17 @@ public final class Draw2D {
         return amount >= 0 ? mix(rgb, 0xFFFFFF, amount) : mix(rgb, 0x000000, -amount);
     }
 
+    private static void emitTri(MeshBuilder mb,
+                                double x0, double y0, int i0,
+                                double x1, double y1, int i1,
+                                double x2, double y2, int i2) {
+        if ((x1 - x0) * (y2 - y0) - (y1 - y0) * (x2 - x0) > 0) {
+            mb.triangle(i0, i2, i1);
+        } else {
+            mb.triangle(i0, i1, i2);
+        }
+    }
+
     /** Emits a solid-coloured arbitrary quad to {@link Renderer2D#COLOR} (must be between begin/render). */
     public static void polyQuad(double x0, double y0, double x1, double y1,
                                 double x2, double y2, double x3, double y3, int argb) {
@@ -68,7 +79,8 @@ public final class Draw2D {
         int i1 = mb.vec2(x1, y1).color(c).next();
         int i2 = mb.vec2(x2, y2).color(c).next();
         int i3 = mb.vec2(x3, y3).color(c).next();
-        mb.quad(i0, i1, i2, i3);
+        emitTri(mb, x0, y0, i0, x1, y1, i1, x2, y2, i2);
+        emitTri(mb, x0, y0, i0, x2, y2, i2, x3, y3, i3);
     }
 
     /** Emits a 4-color gradient arbitrary quad to {@link Renderer2D#COLOR} (must be between begin/render). */
@@ -83,7 +95,8 @@ public final class Draw2D {
         int i1 = mb.vec2(x1, y1).color(setColor(C1, c1)).next();
         int i2 = mb.vec2(x2, y2).color(setColor(C2, c2)).next();
         int i3 = mb.vec2(x3, y3).color(setColor(C3, c3)).next();
-        mb.quad(i0, i1, i2, i3);
+        emitTri(mb, x0, y0, i0, x1, y1, i1, x2, y2, i2);
+        emitTri(mb, x0, y0, i0, x2, y2, i2, x3, y3, i3);
     }
 
     /** Emits a 3-color gradient triangle to {@link Renderer2D#COLOR}. */
@@ -96,7 +109,7 @@ public final class Draw2D {
         int i0 = mb.vec2(x0, y0).color(setColor(C0, c0)).next();
         int i1 = mb.vec2(x1, y1).color(setColor(C1, c1)).next();
         int i2 = mb.vec2(x2, y2).color(setColor(C2, c2)).next();
-        mb.triangle(i0, i1, i2);
+        emitTri(mb, x0, y0, i0, x1, y1, i1, x2, y2, i2);
     }
 
     /** Emits a thick anti-aliased line segment (with optional soft glow) as quads. */
@@ -227,12 +240,17 @@ public final class Draw2D {
 
         mb.ensureCapacity(n, (n - 2) * 3);
         Color c = setColor(C0, argb);
-        int first = mb.vec2(xs[0] + ox, ys[0] + oy).color(c).next();
-        int prev = mb.vec2(xs[1] + ox, ys[1] + oy).color(c).next();
+        double x0 = xs[0] + ox, y0 = ys[0] + oy;
+        double xp = xs[1] + ox, yp = ys[1] + oy;
+        int first = mb.vec2(x0, y0).color(c).next();
+        int prev = mb.vec2(xp, yp).color(c).next();
         for (int i = 2; i < n; i++) {
-            int curr = mb.vec2(xs[i] + ox, ys[i] + oy).color(c).next();
-            mb.triangle(first, prev, curr);
+            double xc = xs[i] + ox, yc = ys[i] + oy;
+            int curr = mb.vec2(xc, yc).color(c).next();
+            emitTri(mb, x0, y0, first, xp, yp, prev, xc, yc, curr);
             prev = curr;
+            xp = xc;
+            yp = yc;
         }
 
         if (ownBatch) Renderer2D.COLOR.render();
